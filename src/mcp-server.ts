@@ -255,7 +255,7 @@ class SapNoteMcpServer {
             componentText: noteDetail.componentText || null,
             priority: noteDetail.priority || null,
             category: noteDetail.category || null,
-            version: noteDetail.version || null,
+            version: noteDetail.version != null ? String(noteDetail.version) : null,
             status: noteDetail.status || null,
             releaseDate: noteDetail.releaseDate,
             language: noteDetail.language,

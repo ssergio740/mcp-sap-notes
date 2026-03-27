@@ -1738,7 +1738,7 @@ export class SapNotesApiClient {
                  componentText: header.SAPComponentKeyText?.value,
                  priority: header.Priority?.value,
                  category: header.Category?.value,
-                 version: header.Version?.value,
+                 version: header.Version?.value != null ? String(header.Version.value) : undefined,
                  status: header.Status?.value,
                  url: `https://launchpad.support.sap.com/#/notes/${noteId}`
                };
@@ -1772,7 +1772,7 @@ export class SapNotesApiClient {
         const errorMessage = jsonError instanceof Error ? jsonError.message : String(jsonError);
         logger.debug(`JSON parsing failed: ${errorMessage}`);
       }
-      
+
       // Check if the entire page content is JSON
       try {
         const jsonMatch = content.match(/<body[^>]*>(.*?)<\/body>/s);
@@ -1781,7 +1781,7 @@ export class SapNotesApiClient {
            if (bodyContent.startsWith('{') && bodyContent.endsWith('}')) {
              const jsonData = JSON.parse(bodyContent);
              logger.info(`🎉 Found JSON in HTML body!`);
-             
+
              // Handle the actual SAP Note API response structure
              if (jsonData.Response && jsonData.Response.SAPNote) {
                const sapNote = jsonData.Response.SAPNote;
@@ -1800,7 +1800,7 @@ export class SapNotesApiClient {
                  componentText: header.SAPComponentKeyText?.value,
                  priority: header.Priority?.value,
                  category: header.Category?.value,
-                 version: header.Version?.value,
+                 version: header.Version?.value != null ? String(header.Version.value) : undefined,
                  status: header.Status?.value,
                  url: `https://launchpad.support.sap.com/#/notes/${noteId}`
                };
