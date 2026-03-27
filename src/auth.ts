@@ -41,7 +41,7 @@ class AuthenticationError extends Error {
 
 export class SapAuthenticator {
   private authState: AuthState = { isAuthenticated: false };
-  private authPromise: Promise<void> | null = null;
+  private authPromise: Promise<string> | null = null;
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
@@ -49,29 +49,42 @@ export class SapAuthenticator {
   constructor(private config: ServerConfig) {}
 
   /**
-   * Ensures authentication is valid, performing login if needed
-   * Includes single-flight guard to prevent concurrent authentication attempts
+   * Ensures authentication is valid, performing login if needed.
+   * Uses a single-flight guard: concurrent callers share the same auth attempt.
+   * On failure the error propagates to all waiters and the guard resets.
    */
   async ensureAuthenticated(): Promise<string> {
-    // Single-flight guard - if authentication is in progress, wait for it
-    if (this.authPromise) {
-      await this.authPromise;
-    }
-
-    // Check if current token is still valid
+    // Check if current token is still valid (fast path, no lock needed)
     if (this.isTokenValid()) {
       return this.authState.token!;
     }
 
-    // Start new authentication flow
-    this.authPromise = this.authenticate();
-    await this.authPromise;
-    this.authPromise = null;
-
-    if (!this.authState.token) {
-      throw new Error('Authentication failed - no token received');
+    // Single-flight guard: if auth is already in progress, all callers share it
+    if (this.authPromise) {
+      return this.authPromise;
     }
 
+    // Start new authentication flow
+    this.authPromise = this.performAuth();
+
+    try {
+      const token = await this.authPromise;
+      return token;
+    } finally {
+      // Always clear the guard so the next failure can retry
+      this.authPromise = null;
+    }
+  }
+
+  /**
+   * Internal: run authenticate() and return the token.
+   * Separated so the single-flight guard can properly propagate errors.
+   */
+  private async performAuth(): Promise<string> {
+    await this.authenticate();
+    if (!this.authState.token) {
+      throw new AuthenticationError('Authentication completed but no token was received');
+    }
     return this.authState.token;
   }
 
@@ -607,12 +620,17 @@ export class SapAuthenticator {
         await this.authenticateWithCertificate(this.page);
       }
 
-      // Wait a moment for cookies to be fully set
-      await this.page.waitForTimeout(3000);
+      // Wait briefly for any final cookie-setting redirects
+      await this.page.waitForTimeout(1500);
 
       // Extract cookies
       logger.warn('Extracting authentication cookies...');
       const allCookies = await this.context.cookies();
+
+      if (allCookies.length === 0) {
+        throw new AuthenticationError('Authentication appeared to succeed but no cookies were set');
+      }
+
       logger.warn(`Retrieved ${allCookies.length} cookies`);
 
       const cookieString = allCookies.map(cookie =>
@@ -672,28 +690,32 @@ export class SapAuthenticator {
   }
 
   /**
-   * Load cached token from disk
+   * Load cached token from disk with structure validation
    */
-  private loadCachedToken(): any {
+  private loadCachedToken(): { access_token: string; expiresAt: number; cookies?: any[] } | null {
     try {
-      if (existsSync(TOKEN_CACHE_FILE)) {
-        const cached = JSON.parse(readFileSync(TOKEN_CACHE_FILE, 'utf-8'));
-        return cached;
+      if (!existsSync(TOKEN_CACHE_FILE)) return null;
+
+      const raw = readFileSync(TOKEN_CACHE_FILE, 'utf-8');
+      const cached = JSON.parse(raw);
+
+      // Validate required fields
+      if (typeof cached?.access_token !== 'string' || typeof cached?.expiresAt !== 'number') {
+        logger.warn('Cached token has invalid structure, ignoring');
+        return null;
       }
+
+      return cached;
     } catch (error) {
       logger.warn('Failed to load cached token:', error);
+      return null;
     }
-    return null;
   }
 
   /**
    * Check if cached token is still valid
    */
-  private isTokenValidFromCache(cachedToken: any): boolean {
-    if (!cachedToken.access_token || !cachedToken.expiresAt) {
-      return false;
-    }
-
+  private isTokenValidFromCache(cachedToken: { access_token: string; expiresAt: number }): boolean {
     const bufferMs = 5 * 60 * 1000;
     return Date.now() < (cachedToken.expiresAt - bufferMs);
   }

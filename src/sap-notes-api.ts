@@ -48,6 +48,10 @@ export class SapNotesApiClient {
   private browserLastUsed: number = 0;
   private readonly BROWSER_IDLE_TIMEOUT = 5 * 60 * 1000; // Close browser after 5 minutes idle
 
+  // Coveo token cache (tokens are valid ~15-30 min)
+  private coveoTokenCache: { token: string; expiresAt: number } | null = null;
+  private readonly COVEO_TOKEN_TTL = 14 * 60 * 1000; // Cache for 14 minutes (conservative)
+
   constructor(config: ServerConfig) {
     this.config = config;
   }
@@ -430,21 +434,36 @@ export class SapNotesApiClient {
   }
 
   /**
-   * Get Coveo bearer token from SAP authentication
-   * Primary method - tries direct API first, falls back to Playwright navigation
+   * Get Coveo bearer token from SAP authentication.
+   * Uses cached token if available, otherwise fetches via direct API or Playwright fallback.
    */
   private async getCoveoToken(sapToken: string): Promise<string> {
-    // Method 1: Try direct API calls first (fastest, most reliable)
-    try {
-      return await this.getCoveoTokenDirect(sapToken);
-    } catch (directError) {
-      const directErrorMsg = directError instanceof Error ? directError.message : String(directError);
-      logger.warn(`⚠️ Direct API approach failed: ${directErrorMsg}`);
-      logger.info('🔄 Falling back to Playwright navigation approach...');
+    // Check cache first
+    if (this.coveoTokenCache && Date.now() < this.coveoTokenCache.expiresAt) {
+      logger.debug('Using cached Coveo token');
+      return this.coveoTokenCache.token;
     }
 
-    // Method 2: Fallback to existing Playwright approach
-    return await this.getCoveoTokenWithPlaywright(sapToken);
+    let token: string;
+
+    // Method 1: Try direct API calls first (fastest)
+    try {
+      token = await this.getCoveoTokenDirect(sapToken);
+    } catch (directError) {
+      const directErrorMsg = directError instanceof Error ? directError.message : String(directError);
+      logger.warn(`Direct Coveo API failed: ${directErrorMsg}, falling back to Playwright...`);
+
+      // Method 2: Fallback to Playwright navigation
+      token = await this.getCoveoTokenWithPlaywright(sapToken);
+    }
+
+    // Cache the token
+    this.coveoTokenCache = {
+      token,
+      expiresAt: Date.now() + this.COVEO_TOKEN_TTL
+    };
+
+    return token;
   }
 
   /**
@@ -452,99 +471,16 @@ export class SapNotesApiClient {
    * The token is dynamically generated and embedded in the SAP search page
    */
   private async getCoveoTokenWithPlaywright(sapToken: string): Promise<string> {
-    logger.debug('🔑 Fetching Coveo bearer token from SAP session using Playwright');
-    
-    let page: Page | null = null;
+    logger.debug('Fetching Coveo bearer token via Playwright');
+
+    let page!: Page;
 
     try {
-      // Check if we need to close idle browser
-      const now = Date.now();
-      if (this.browser && (now - this.browserLastUsed > this.BROWSER_IDLE_TIMEOUT)) {
-        logger.debug('🧹 Closing idle browser session');
-        await this.browser.close().catch(() => {});
-        this.browser = null;
-        this.browserContext = null;
-      }
+      // Use shared persistent browser (handles launch, cookies, idle timeout)
+      await this.ensurePersistentBrowser(sapToken);
 
-      // Reuse existing browser session or create new one
-      if (!this.browser || !this.browser.isConnected()) {
-        logger.debug('🎭 Launching new persistent browser session');
-        
-        // Detect container environment and force headless mode
-        const isDocker = process.env.DOCKER_ENV === 'true' || 
-                        process.env.NODE_ENV === 'production' ||
-                        !process.env.DISPLAY ||
-                        !process.stdin.isTTY ||
-                        process.env.CI === 'true';
-        
-        // Force headless in container/server environments
-        const forceHeadless = isDocker || process.platform === 'linux';
-        const shouldUseHeadless = forceHeadless || !this.config.headful;
-        
-        const launchOptions = {
-          headless: shouldUseHeadless,
-          args: [
-            '--disable-dev-shm-usage', 
-            '--no-sandbox',
-            '--disable-gpu',
-            '--disable-web-security',
-            '--disable-features=VizDisplayCompositor',
-            '--no-first-run',
-            '--disable-background-timer-throttling',
-            '--disable-backgrounding-occluded-windows',
-            '--disable-renderer-backgrounding'
-          ]
-        };
-        
-        logger.debug(`🔧 Browser launch configuration:`);
-        logger.debug(`   Container detected: ${isDocker}`);
-        logger.debug(`   Force headless: ${forceHeadless}`);
-        logger.debug(`   Config headful: ${this.config.headful}`);
-        logger.debug(`   Final headless: ${shouldUseHeadless}`);
-        logger.debug(`   Platform: ${process.platform}`);
-        logger.debug(`   Display: ${process.env.DISPLAY || 'NOT_SET'}`);
-        logger.debug(`   Launch options: ${JSON.stringify(launchOptions, null, 2)}`);
-        
-        this.browser = await chromium.launch(launchOptions);
+      page = await this.browserContext!.newPage();
 
-        this.browserContext = await this.browser.newContext({
-          userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
-        });
-
-        // Add cookies from cached authentication
-        const cookies = await this.getCachedCookies();
-        if (cookies.length > 0) {
-          // Filter out session cookies and log them
-          const sessionCookies = cookies.filter(c => c.expires === -1);
-          const persistentCookies = cookies.filter(c => c.expires !== -1);
-          
-          if (sessionCookies.length > 0) {
-            logger.warn(`⚠️  Found ${sessionCookies.length} session cookies (may expire): ${sessionCookies.map(c => c.name).join(', ')}`);
-          }
-          
-          await this.browserContext.addCookies(cookies);
-          logger.debug(`🍪 Added ${cookies.length} cached cookies (${persistentCookies.length} persistent, ${sessionCookies.length} session)`);
-        } else {
-          // Fallback to parsing token string
-          const parsedCookies = this.parseCookiesFromToken(sapToken);
-          if (parsedCookies.length > 0) {
-            await this.browserContext.addCookies(parsedCookies);
-            logger.debug(`🍪 Added ${parsedCookies.length} parsed cookies to browser context`);
-          }
-        }
-        
-        logger.info('✅ Persistent browser session created - session cookies will remain valid');
-      } else {
-        logger.debug('♻️  Reusing existing browser session (session cookies still valid)');
-      }
-
-      this.browserLastUsed = now;
-      page = await this.browserContext.newPage();
-      
-      if (!page) {
-        throw new Error('Failed to create browser page');
-      }
-      
       // Set up response listener to detect redirects to login pages
       let wasRedirectedToLogin = false;
       page.on('response', (response) => {
@@ -1332,72 +1268,77 @@ export class SapNotesApiClient {
   /**
    * Get SAP Note details using Playwright to handle authentication and JavaScript
    */
+  /**
+   * Ensure the persistent browser is available and has cookies loaded.
+   * Shared by Coveo token Playwright fallback and note retrieval.
+   */
+  private async ensurePersistentBrowser(token: string): Promise<void> {
+    const now = Date.now();
+
+    // Close idle browser
+    if (this.browser && (now - this.browserLastUsed > this.BROWSER_IDLE_TIMEOUT)) {
+      logger.debug('Closing idle persistent browser');
+      await this.browser.close().catch(() => {});
+      this.browser = null;
+      this.browserContext = null;
+    }
+
+    if (this.browser && this.browser.isConnected()) {
+      this.browserLastUsed = Date.now();
+      return;
+    }
+
+    // Detect container environment
+    const isDocker = process.env.DOCKER_ENV === 'true' ||
+                    process.env.NODE_ENV === 'production' ||
+                    !process.env.DISPLAY ||
+                    !process.stdin.isTTY ||
+                    process.env.CI === 'true';
+
+    const forceHeadless = isDocker || process.platform === 'linux';
+    const shouldUseHeadless = forceHeadless || !this.config.headful;
+
+    this.browser = await chromium.launch({
+      headless: shouldUseHeadless,
+      args: [
+        '--disable-dev-shm-usage',
+        '--no-sandbox',
+        '--disable-gpu',
+        '--disable-features=VizDisplayCompositor',
+        '--no-first-run',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding'
+      ]
+    });
+
+    this.browserContext = await this.browser.newContext({
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
+    });
+
+    // Add cookies from cached authentication
+    const cookies = await this.getCachedCookies();
+    if (cookies.length > 0) {
+      await this.browserContext.addCookies(cookies);
+      logger.debug(`Added ${cookies.length} cached cookies to persistent browser`);
+    } else {
+      const parsedCookies = this.parseCookiesFromToken(token);
+      if (parsedCookies.length > 0) {
+        await this.browserContext.addCookies(parsedCookies);
+      }
+    }
+
+    this.browserLastUsed = Date.now();
+    logger.info('Persistent browser session created');
+  }
+
   private async getNoteWithPlaywright(noteId: string, token: string): Promise<SapNoteDetail | null> {
-    let browser: Browser | null = null;
-    let page: Page | null = null;
+    let page!: Page;
 
     try {
-      logger.debug(`🎭 Launching browser for note ${noteId}`);
-      
-      // Detect container environment and force headless mode
-      const isDocker = process.env.DOCKER_ENV === 'true' || 
-                      process.env.NODE_ENV === 'production' ||
-                      !process.env.DISPLAY ||
-                      !process.stdin.isTTY ||
-                      process.env.CI === 'true';
-      
-      // Force headless in container/server environments
-      const forceHeadless = isDocker || process.platform === 'linux';
-      const shouldUseHeadless = forceHeadless || !this.config.headful;
-      
-      const launchOptions = {
-        headless: shouldUseHeadless,
-        args: [
-          '--disable-dev-shm-usage', 
-          '--no-sandbox',
-          '--disable-gpu',
-          '--disable-web-security',
-          '--disable-features=VizDisplayCompositor',
-          '--no-first-run',
-          '--disable-background-timer-throttling',
-          '--disable-backgrounding-occluded-windows',
-          '--disable-renderer-backgrounding'
-        ]
-      };
-      
-      logger.debug(`🔧 Note browser launch configuration:`);
-      logger.debug(`   Note ID: ${noteId}`);
-      logger.debug(`   Container detected: ${isDocker}`);
-      logger.debug(`   Force headless: ${forceHeadless}`);
-      logger.debug(`   Config headful: ${this.config.headful}`);
-      logger.debug(`   Final headless: ${shouldUseHeadless}`);
-      logger.debug(`   Platform: ${process.platform}`);
-      logger.debug(`   Display: ${process.env.DISPLAY || 'NOT_SET'}`);
-      logger.debug(`   Launch options: ${JSON.stringify(launchOptions, null, 2)}`);
-      
-      // Launch browser
-      browser = await chromium.launch(launchOptions);
-
-      // Create context and add cookies
-      const context = await browser.newContext({
-        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
-      });
-
-      // Get cookies from the cached authentication
-      const cookies = await this.getCachedCookies();
-      if (cookies.length > 0) {
-        await context.addCookies(cookies);
-        logger.debug(`🍪 Added ${cookies.length} cached cookies to browser context`);
-      } else {
-        // Fallback to parsing token string if no cached cookies
-        const parsedCookies = this.parseCookiesFromToken(token);
-        if (parsedCookies.length > 0) {
-          await context.addCookies(parsedCookies);
-          logger.debug(`🍪 Added ${parsedCookies.length} parsed cookies to browser context`);
-        }
-      }
-
-      page = await context.newPage();
+      // Reuse persistent browser instead of launching a new one each call
+      await this.ensurePersistentBrowser(token);
+      page = await this.browserContext!.newPage();
 
       // Navigate to the raw notes endpoint
       const rawUrl = `https://me.sap.com/backend/raw/sapnotes/Detail?q=${noteId}&t=E&isVTEnabled=false`;
@@ -1597,12 +1538,9 @@ export class SapNotesApiClient {
       logger.error(`❌ Playwright note extraction failed: ${errorMessage}`);
       throw new Error(`Playwright extraction failed: ${errorMessage}`);
     } finally {
-      // Cleanup
+      // Only close the page, keep the persistent browser alive
       if (page) {
         await page.close().catch(() => {});
-      }
-      if (browser) {
-        await browser.close().catch(() => {});
       }
     }
   }
