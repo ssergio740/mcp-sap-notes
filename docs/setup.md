@@ -151,14 +151,80 @@ npm run dev:http     # Watch mode (HTTP)
 
 ## Docker
 
-The server can run in Docker with the HTTP transport:
+The Dockerfile is based on the official Playwright image and includes Chromium pre-installed.
+
+### Build
 
 ```bash
-docker build -t sap-notes-mcp .
-docker run -p 3123:3123 \
-  -e SAP_USERNAME=your.email@company.com \
-  -e SAP_PASSWORD=your_sap_password \
-  sap-notes-mcp
+docker build -t mcp-sap-notes .
 ```
 
-Ensure the Docker image includes Playwright dependencies (chromium, nss, freetype, harfbuzz).
+### Run with username/password
+
+```bash
+docker run -d --name mcp-sap-notes \
+  --shm-size=1g \
+  -p 3123:3123 \
+  -e SAP_USERNAME=your.email@company.com \
+  -e SAP_PASSWORD=your_sap_password \
+  mcp-sap-notes
+```
+
+### Run with certificate
+
+```bash
+docker run -d --name mcp-sap-notes \
+  --shm-size=1g \
+  -p 3123:3123 \
+  -v ./certs:/app/certs:ro \
+  -e PFX_PATH=/app/certs/sap.pfx \
+  -e PFX_PASSPHRASE=your_passphrase \
+  mcp-sap-notes
+```
+
+### With endpoint authentication
+
+```bash
+docker run -d --name mcp-sap-notes \
+  --shm-size=1g \
+  -p 3123:3123 \
+  -e SAP_USERNAME=your.email@company.com \
+  -e SAP_PASSWORD=your_sap_password \
+  -e ACCESS_TOKEN=your-secret-token \
+  mcp-sap-notes
+```
+
+### Docker Compose (LibreChat)
+
+```yaml
+services:
+  sap_notes:
+    image: mcp-sap-notes:latest
+    container_name: mcp-sap-notes
+    ports:
+      - "3123:3123"
+    shm_size: 1g
+    environment:
+      - SAP_USERNAME=${SAP_USERNAME}
+      - SAP_PASSWORD=${SAP_PASSWORD}
+      - ACCESS_TOKEN=${ACCESS_TOKEN}
+      - LOG_LEVEL=info
+```
+
+### Verify
+
+```bash
+# Health check
+curl http://localhost:3123/health
+
+# Test search
+curl -X POST http://localhost:3123/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
+### Notes
+
+- `--shm-size=1g` is required for Chromium to work properly in Docker
+- The image is ~1.2GB (Playwright base + Chromium)
+- First tool call takes ~30s (browser auth), subsequent calls are fast (~1-3s)

@@ -1,0 +1,12 @@
+node_modules
+dist
+.env
+token-cache.json
+certs/
+*.pfx
+debug-*.png
+COVEO_TOKEN_IMPLEMENTATION_SUMMARY.md
+DEBUG_ENHANCEMENTS_SUMMARY.md
+DOCKER_SOLUTION_SUMMARY.md
+HEADLESS_MODE_FIX.md
+.git
