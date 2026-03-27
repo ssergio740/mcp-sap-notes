@@ -52,52 +52,60 @@ class SapNoteMcpServer {
    * Load configuration from environment variables
    */
   private loadConfig(): ServerConfig {
-    const requiredEnvVars = ['PFX_PATH', 'PFX_PASSPHRASE'];
-    const missing = requiredEnvVars.filter(envVar => !process.env[envVar]);
-    
-    if (missing.length > 0) {
-      throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+    // Determine auth method
+    const authMethod = (process.env.AUTH_METHOD || 'auto') as 'certificate' | 'password' | 'auto';
+    const sapUsername = process.env.SAP_USERNAME;
+    const sapPassword = process.env.SAP_PASSWORD;
+    const hasCertConfig = !!(process.env.PFX_PATH && process.env.PFX_PASSPHRASE);
+    const hasPasswordConfig = !!(sapUsername && sapPassword);
+
+    // Validate that at least one auth method is configured
+    if (!hasCertConfig && !hasPasswordConfig) {
+      throw new Error(
+        'No authentication configured. Set either SAP_USERNAME + SAP_PASSWORD for password auth, ' +
+        'or PFX_PATH + PFX_PASSPHRASE for certificate auth.'
+      );
     }
 
-    // Resolve PFX path relative to the project root (where package.json is)
+    // Resolve PFX path (may be empty if using password auth)
     const projectRoot = join(__dirname, '..');
-    let pfxPath = process.env.PFX_PATH!;
+    let pfxPath = process.env.PFX_PATH || '';
 
-    // Expand tilde to user home on all platforms
-    if (pfxPath.startsWith('~')) {
-      const home = process.env.HOME || process.env.USERPROFILE || '';
-      pfxPath = join(home, pfxPath.slice(2));
+    if (pfxPath) {
+      if (pfxPath.startsWith('~')) {
+        const home = process.env.HOME || process.env.USERPROFILE || '';
+        pfxPath = join(home, pfxPath.slice(2));
+      }
+      if (!isAbsolute(pfxPath)) {
+        pfxPath = join(projectRoot, pfxPath);
+      }
     }
-
-    // If it's not absolute, resolve against project root (works on win32 and posix)
-    if (!isAbsolute(pfxPath)) {
-      pfxPath = join(projectRoot, pfxPath);
-    }
-
-    logger.warn('🔧 Configuration loaded:', {
-      pfxPath: pfxPath,
-      projectRoot: projectRoot,
-      workingDir: process.cwd()
-    });
 
     // Detect Docker/container environment
-    const isDocker = process.env.DOCKER_ENV === 'true' || 
+    const isDocker = process.env.DOCKER_ENV === 'true' ||
                     process.env.NODE_ENV === 'production' ||
                     !process.env.DISPLAY ||
                     !process.stdin.isTTY ||
                     process.env.CI === 'true';
-    
-    // Force headless in container environments unless explicitly overridden
+
     const headful = !isDocker && process.env.HEADFUL === 'true';
-    
-    logger.warn(`🐳 Container detection: ${isDocker}`);
-    logger.warn(`🖥️  Headful mode: ${headful}`);
-    
+
+    logger.warn('Configuration loaded:', {
+      authMethod,
+      hasPassword: hasPasswordConfig,
+      hasCertificate: hasCertConfig,
+      headful
+    });
+
     return {
-      pfxPath: pfxPath,
-      pfxPassphrase: process.env.PFX_PASSPHRASE!,
+      pfxPath,
+      pfxPassphrase: process.env.PFX_PASSPHRASE || '',
+      sapUsername,
+      sapPassword,
+      authMethod,
+      mfaTimeout: parseInt(process.env.MFA_TIMEOUT || '120000'),
       maxJwtAgeH: parseInt(process.env.MAX_JWT_AGE_H || '12'),
-      headful: headful,
+      headful,
       logLevel: process.env.LOG_LEVEL || 'info'
     };
   }

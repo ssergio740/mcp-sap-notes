@@ -26,10 +26,12 @@ console.log(`   Token length: ${token.length} characters\n`);
 const { SapNotesApiClient } = await import('../dist/sap-notes-api.js');
 
 const config_obj = {
-  pfxPath: process.env.PFX_PATH,
-  pfxPassphrase: process.env.PFX_PASSPHRASE,
-  coveoOrg: process.env.COVEO_ORG || 'sapamericaproductiontyfzmfz0',
-  coveoHost: process.env.COVEO_HOST || 'platform.cloud.coveo.com',
+  pfxPath: process.env.PFX_PATH || '',
+  pfxPassphrase: process.env.PFX_PASSPHRASE || '',
+  sapUsername: process.env.SAP_USERNAME,
+  sapPassword: process.env.SAP_PASSWORD,
+  authMethod: process.env.AUTH_METHOD || 'auto',
+  mfaTimeout: parseInt(process.env.MFA_TIMEOUT || '120000'),
   maxJwtAgeH: parseInt(process.env.MAX_JWT_AGE_H || '12'),
   headful: process.env.HEADFUL === 'true',
   logLevel: process.env.LOG_LEVEL || 'info'

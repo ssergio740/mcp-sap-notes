@@ -109,16 +109,41 @@ export class SapNotesApiClient {
 
         // Parse Coveo response to our format
         const results = this.parseCoveoResponse(data);
-        
+
         logger.info(`✅ Found ${results.length} SAP Note(s) via Coveo`);
-        logger.debug(`📄 Search results: ${JSON.stringify(results.map(r => ({ id: r.id, title: r.title })), null, 2)}`);
+
+        // If Coveo returned 0 results and query looks like a note ID, try direct lookup
+        if (results.length === 0 && /^\d{5,10}$/.test(query.trim())) {
+          logger.info(`Query "${query}" looks like a note ID with 0 Coveo results, trying direct lookup...`);
+          try {
+            const note = await this.getNote(query.trim(), token);
+            if (note) {
+              logger.info(`Found note ${query} via direct lookup`);
+              return {
+                results: [{
+                  id: note.id,
+                  title: note.title,
+                  summary: note.summary,
+                  component: note.component,
+                  releaseDate: note.releaseDate,
+                  language: note.language,
+                  url: note.url
+                }],
+                totalResults: 1,
+                query
+              };
+            }
+          } catch (directError) {
+            logger.warn(`Direct note lookup failed: ${directError instanceof Error ? directError.message : String(directError)}`);
+          }
+        }
 
         return {
           results,
           totalResults: data.totalCount || results.length,
           query
         };
-        
+
       } catch (coveoError) {
         const errorMessage = coveoError instanceof Error ? coveoError.message : String(coveoError);
         logger.warn(`⚠️ Primary Coveo search failed: ${errorMessage}`);
@@ -311,47 +336,50 @@ export class SapNotesApiClient {
    */
   private async getCoveoTokenDirect(sapToken: string): Promise<string> {
     logger.info('🚀 Attempting direct Coveo token API approach');
-    
-    // Ensure cookies are properly formatted for API calls
-    const formattedCookies = await this.formatCookiesForAPI(sapToken);
-    
-    // Construct knowledge search URL to use as referrer
-    const searchParams = JSON.stringify({
-      q: 'test',
-      tab: 'All',
-      f: { documenttype: ['SAP Note'] }
-    });
-    const referrerUrl = `https://me.sap.com/knowledge/search/${encodeURIComponent(searchParams)}`;
-    
+
+    // Get cookies filtered for me.sap.com domain only
+    const meSapCookies = await this.getCookiesForDomain('me.sap.com');
+
+    if (meSapCookies.length === 0) {
+      // Fall back to token string
+      const formattedCookies = await this.formatCookiesForAPI(sapToken);
+      if (!formattedCookies || formattedCookies.length < 50) {
+        throw new Error('No valid cookies available for direct API');
+      }
+    }
+
+    const formattedCookies = meSapCookies.length > 0
+      ? meSapCookies.map(c => `${c.name}=${c.value}`).join('; ')
+      : await this.formatCookiesForAPI(sapToken);
+
+    logger.debug(`Direct API: using ${meSapCookies.length} domain-filtered cookies`);
+
     // Common headers based on network analysis
-    const commonHeaders = {
+    const commonHeaders: Record<string, string> = {
       'Accept': 'application/json, text/javascript, */*; q=0.01',
-      'Accept-Language': 'de',
+      'Accept-Language': 'en-US,en;q=0.9',
       'X-Requested-With': 'XMLHttpRequest',
-      'Cache-Control': 'no-cache',
-      'Pragma': 'no-cache',
-      'Referer': referrerUrl,
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
+      'Referer': 'https://me.sap.com/',
+      'Origin': 'https://me.sap.com',
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
       'Cookie': formattedCookies
     };
 
+    // Add CSRF token from cookies if available
+    const csrfCookie = meSapCookies.find(c => c.name.toLowerCase().includes('csrf') || c.name.toLowerCase().includes('xsrf'));
+    if (csrfCookie) {
+      commonHeaders['X-Csrf-Token'] = csrfCookie.value;
+      commonHeaders['X-XSRF-TOKEN'] = csrfCookie.value;
+      logger.debug(`Added CSRF token header from cookie: ${csrfCookie.name}`);
+    }
+
     try {
-      // Enhanced debugging for direct API approach
-      const cookieCount = (formattedCookies.match(/=/g) || []).length;
-      logger.debug(`🔍 ENHANCED DEBUG: Direct API approach details:`);
-      logger.debug(`   🍪 Using ${cookieCount} cookies for direct API`);
-      logger.debug(`   📋 Referrer URL: ${referrerUrl}`);
-      logger.debug(`   🔧 Sample cookie names: ${formattedCookies.split(';').slice(0, 5).map(c => c.split('=')[0].trim()).join(', ')}...`);
-      logger.debug(`   📊 Cookie string length: ${formattedCookies.length}`);
-      logger.debug(`   🌐 Target endpoints:`);
-      logger.debug(`      1. https://me.sap.com/backend/raw/core/Applications/coveo`);
-      logger.debug(`      2. https://me.sap.com/backend/raw/coveo/CoveoToken`);
-      
       // Step 1: Initialize Coveo application first (required prerequisite)
-      logger.debug('📋 Step 1: Initializing Coveo application...');
+      logger.debug('Step 1: Initializing Coveo application...');
       const appResponse = await fetch('https://me.sap.com/backend/raw/core/Applications/coveo', {
         method: 'GET',
-        headers: commonHeaders
+        headers: commonHeaders,
+        redirect: 'follow'
       });
 
       // Enhanced error logging
@@ -1634,6 +1662,22 @@ export class SapNotesApiClient {
   /**
    * Get cached cookies from the token cache file
    */
+  /**
+   * Get cookies filtered for a specific domain
+   * Handles domain matching: .sap.com matches me.sap.com, me.sap.com matches exactly
+   */
+  private async getCookiesForDomain(targetDomain: string): Promise<Array<{name: string, value: string, domain: string, path: string}>> {
+    const allCookies = await this.getCachedCookies();
+    return allCookies.filter(c => {
+      const cookieDomain = c.domain.startsWith('.') ? c.domain : `.${c.domain}`;
+      const target = `.${targetDomain}`;
+      // Cookie domain .sap.com matches me.sap.com
+      // Cookie domain .me.sap.com matches me.sap.com
+      // Cookie domain me.sap.com matches me.sap.com
+      return target.endsWith(cookieDomain) || cookieDomain === target;
+    });
+  }
+
   private async getCachedCookies(): Promise<Array<{name: string, value: string, domain: string, path: string, expires?: number, secure?: boolean, httpOnly?: boolean, sameSite?: 'Strict' | 'Lax' | 'None'}>> {
     try {
       const { readFileSync, existsSync } = await import('fs');

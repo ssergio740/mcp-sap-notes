@@ -37,10 +37,22 @@ export interface SapNoteDetail extends SapNote {
   content: string;
 }
 
+// Authentication method type
+export type AuthMethod = 'certificate' | 'password' | 'auto';
+
 // Configuration and environment
 export interface ServerConfig {
+  // Certificate auth (optional if using password auth)
   pfxPath: string;
   pfxPassphrase: string;
+  // Username/password auth (optional if using certificate auth)
+  sapUsername?: string;
+  sapPassword?: string;
+  // Auth method selection
+  authMethod: AuthMethod;
+  // MFA/2FA timeout in ms (how long to wait for manual 2FA code entry)
+  mfaTimeout: number;
+  // General config
   maxJwtAgeH: number;
   headful: boolean;
   logLevel: string;

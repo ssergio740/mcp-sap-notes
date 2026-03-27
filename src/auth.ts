@@ -31,7 +31,7 @@ class AuthenticationTimeoutError extends Error {
 
 class AuthenticationError extends Error {
   originalError?: Error;
-  
+
   constructor(message: string, originalError?: Error) {
     super(message);
     this.name = 'AuthenticationError';
@@ -80,10 +80,10 @@ export class SapAuthenticator {
    * Call this when session cookies have expired or been rejected by SAP
    */
   invalidateAuth(): void {
-    logger.warn('🗑️  Invalidating cached authentication');
+    logger.warn('Invalidating cached authentication');
     this.authState = { isAuthenticated: false };
   }
-  
+
   /**
    * Check if the current token is valid and not expired
    */
@@ -98,149 +98,68 @@ export class SapAuthenticator {
   }
 
   /**
-   * Check if a specific browser is available with detailed debugging
+   * Determine which auth method to use based on config
+   */
+  private resolveAuthMethod(): 'certificate' | 'password' {
+    const method = this.config.authMethod;
+
+    if (method === 'password') {
+      if (!this.config.sapUsername || !this.config.sapPassword) {
+        throw new AuthenticationError('Password auth requested but SAP_USERNAME or SAP_PASSWORD not set');
+      }
+      return 'password';
+    }
+
+    if (method === 'certificate') {
+      if (!this.config.pfxPath || !this.config.pfxPassphrase) {
+        throw new AuthenticationError('Certificate auth requested but PFX_PATH or PFX_PASSPHRASE not set');
+      }
+      return 'certificate';
+    }
+
+    // Auto mode: prefer password if credentials available, fall back to certificate
+    if (this.config.sapUsername && this.config.sapPassword) {
+      logger.warn('Auto auth: using username/password authentication');
+      return 'password';
+    }
+
+    if (this.config.pfxPath && this.config.pfxPassphrase) {
+      logger.warn('Auto auth: using certificate authentication');
+      return 'certificate';
+    }
+
+    throw new AuthenticationError(
+      'No authentication credentials configured. Set either SAP_USERNAME + SAP_PASSWORD or PFX_PATH + PFX_PASSPHRASE'
+    );
+  }
+
+  /**
+   * Check if a specific browser is available
    */
   private static async checkBrowserAvailable(browserType: string = 'chromium'): Promise<boolean> {
     try {
       const browsers = { chromium, firefox, webkit };
       const browser = browsers[browserType as keyof typeof browsers];
       if (!browser) {
-        logger.error(`❌ Browser type '${browserType}' not found in Playwright`);
+        logger.error(`Browser type '${browserType}' not found in Playwright`);
         return false;
       }
-      
-      // Try to get executable path with detailed debugging
-      logger.warn(`🔍 Checking ${browserType} browser availability...`);
+
+      logger.warn(`Checking ${browserType} browser availability...`);
       const executablePath = await browser.executablePath();
-      logger.warn(`✅ Browser executable found at: ${executablePath}`);
-      
-      // Check if executable actually exists
+
       const fs = await import('fs');
       if (!fs.existsSync(executablePath)) {
-        logger.error(`❌ Browser executable not found at: ${executablePath}`);
+        logger.error(`Browser executable not found at: ${executablePath}`);
         return false;
       }
-      
-      logger.warn(`✅ Browser executable verified at: ${executablePath}`);
+
+      logger.warn(`Browser executable verified at: ${executablePath}`);
       return true;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error(`❌ Browser availability check failed for ${browserType}:`);
-      logger.error(`   Error: ${errorMessage}`);
-      
-      // Add detailed debugging for Docker/container issues
-      await SapAuthenticator.debugBrowserEnvironment(browserType);
-      
+      logger.error(`Browser availability check failed for ${browserType}: ${errorMessage}`);
       return false;
-    }
-  }
-
-  /**
-   * Debug browser environment for Docker/container issues
-   */
-  private static async debugBrowserEnvironment(browserType: string): Promise<void> {
-    logger.error(`🔍 Debugging browser environment for ${browserType}:`);
-    
-    // Check environment variables
-    const playwrightEnvVars = [
-      'PLAYWRIGHT_BROWSERS_PATH',
-      'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD',
-      'PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH',
-      'PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH',
-      'PLAYWRIGHT_WEBKIT_EXECUTABLE_PATH'
-    ];
-    
-    logger.error('   Environment variables:');
-    playwrightEnvVars.forEach(envVar => {
-      const value = process.env[envVar];
-      logger.error(`     ${envVar}: ${value || 'NOT_SET'}`);
-    });
-    
-    // Check if running in Docker
-    const fs = await import('fs');
-    const isDocker = fs.existsSync('/.dockerenv') || fs.existsSync('/proc/self/cgroup');
-    logger.error(`   Running in Docker: ${isDocker}`);
-    
-    // Check system information
-    logger.error(`   Platform: ${process.platform}`);
-    logger.error(`   Architecture: ${process.arch}`);
-    logger.error(`   Node version: ${process.version}`);
-    
-    // Check for common browser paths
-    const commonPaths = [
-      '/usr/bin/chromium',
-      '/usr/bin/chromium-browser', 
-      '/usr/bin/google-chrome',
-      '/usr/bin/firefox',
-      '/opt/google/chrome/chrome',
-      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-    ];
-    
-    logger.error('   System browser paths:');
-    for (const path of commonPaths) {
-      const exists = fs.existsSync(path);
-      logger.error(`     ${path}: ${exists ? 'EXISTS' : 'NOT_FOUND'}`);
-    }
-    
-    // Check Playwright cache directory
-    const playwrightCache = process.env.PLAYWRIGHT_BROWSERS_PATH || 
-                           `${process.env.HOME || '/root'}/.cache/ms-playwright`;
-    logger.error(`   Playwright cache directory: ${playwrightCache}`);
-    
-    if (fs.existsSync(playwrightCache)) {
-      try {
-        const contents = fs.readdirSync(playwrightCache);
-        logger.error(`     Contents: ${contents.join(', ')}`);
-        
-        // Check specific browser directories
-        contents.forEach(item => {
-          const itemPath = `${playwrightCache}/${item}`;
-          if (fs.statSync(itemPath).isDirectory()) {
-            logger.error(`     ${item}/: ${fs.readdirSync(itemPath).join(', ')}`);
-          }
-        });
-      } catch (e) {
-        logger.error(`     Error reading cache directory: ${e}`);
-      }
-    } else {
-      logger.error('     Cache directory does not exist');
-    }
-    
-    // Check for missing dependencies (Alpine Linux specific)
-    if (isDocker) {
-      logger.error('   Docker-specific checks:');
-      const alpineDeps = [
-        '/usr/lib/libnss3.so',
-        '/usr/lib/libxss.so.1',
-        '/usr/lib/libglib-2.0.so.0',
-        '/lib/libpthread.so.0'
-      ];
-      
-      alpineDeps.forEach(dep => {
-        const exists = fs.existsSync(dep);
-        logger.error(`     ${dep}: ${exists ? 'EXISTS' : 'MISSING'}`);
-      });
-    }
-  }
-
-  /**
-   * Validate certificate files
-   */
-  private static async validateCertificate(pfxPath: string, passphrase: string): Promise<boolean> {
-    try {
-      if (!existsSync(pfxPath)) {
-        throw new Error(`Certificate file not found: ${pfxPath}`);
-      }
-      
-      // Try to read the certificate file
-      const certData = readFileSync(pfxPath);
-      if (certData.length === 0) {
-        throw new Error('Certificate file is empty');
-      }
-      
-      return true;
-    } catch (error) {
-      throw new CertificateLoadError(pfxPath, error as Error);
     }
   }
 
@@ -251,27 +170,27 @@ export class SapAuthenticator {
     const browserType = process.env.PLAYWRIGHT_BROWSER_TYPE || 'chromium';
     const browsers = { chromium, firefox, webkit };
     const browser = browsers[browserType as keyof typeof browsers];
-    
+
     if (!browser) {
       throw new BrowserNotFoundError(browserType);
     }
-    
+
     return browser;
   }
 
   /**
-   * Prepare client certificate configuration
+   * Prepare client certificate configuration for certificate auth
    */
   private prepareClientCertificate() {
     const origin = 'https://accounts.sap.com';
-    
+
     try {
       if (!existsSync(this.config.pfxPath)) {
         throw new Error(`PFX file not found: ${this.config.pfxPath}`);
       }
 
       const pfxData = readFileSync(this.config.pfxPath);
-      logger.warn(`🔐 Loaded PFX certificate from: ${this.config.pfxPath}`);
+      logger.warn(`Loaded PFX certificate from: ${this.config.pfxPath}`);
 
       return {
         origin,
@@ -284,13 +203,323 @@ export class SapAuthenticator {
   }
 
   /**
-   * Perform the full authentication flow using direct Playwright implementation
+   * Check if we're still on an authentication page (login, SAML, 2FA)
+   * Inspired by PR #4's broader detection and wdi5's auth state tracking
+   */
+  private isOnAuthPage(url: string, title: string): boolean {
+    const urlLower = url.toLowerCase();
+    const titleLower = title.toLowerCase();
+
+    return (
+      urlLower.includes('accounts.sap.com') ||
+      urlLower.includes('login') ||
+      urlLower.includes('auth') ||
+      urlLower.includes('saml2/idp') ||
+      urlLower.includes('two-factor') ||
+      titleLower.includes('login') ||
+      titleLower.includes('sign in') ||
+      titleLower.includes('two-factor') ||
+      titleLower.includes('authentication') ||
+      titleLower.includes('verify')
+    );
+  }
+
+  /**
+   * Wait for authentication to complete (redirect away from auth pages)
+   * Supports MFA/2FA by waiting up to the configured timeout
+   */
+  private async waitForAuthComplete(page: Page, timeoutMs: number): Promise<void> {
+    logger.warn(`Waiting up to ${timeoutMs / 1000}s for authentication to complete...`);
+
+    try {
+      await page.waitForURL(
+        url => {
+          const urlStr = url.toString().toLowerCase();
+          return (
+            !urlStr.includes('accounts.sap.com') &&
+            !urlStr.includes('saml2/idp') &&
+            !urlStr.includes('login') &&
+            !urlStr.includes('two-factor')
+          );
+        },
+        { timeout: timeoutMs }
+      );
+      logger.warn('Authentication redirect completed');
+    } catch (error) {
+      logger.warn('Auth redirect wait timed out, checking current state...');
+      // Don't throw - the page might still have valid cookies even if URL detection failed
+    }
+  }
+
+  /**
+   * Perform username/password authentication via form filling
+   * Inspired by wdi5's BTPAuthenticator and CustomAuthenticator patterns
+   */
+  private async authenticateWithPassword(page: Page): Promise<void> {
+    const username = this.config.sapUsername!;
+    const password = this.config.sapPassword!;
+
+    logger.warn('Starting username/password authentication...');
+
+    // Navigate to SAP
+    const authUrl = 'https://me.sap.com/home';
+    await page.goto(authUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+    // Wait for network to settle
+    try {
+      await page.waitForLoadState('networkidle', { timeout: 15000 });
+    } catch {
+      logger.warn('Network did not settle in 15s, continuing...');
+    }
+
+    // Check if we're on the login page
+    const currentUrl = page.url();
+    const pageTitle = await page.title();
+
+    if (!this.isOnAuthPage(currentUrl, pageTitle)) {
+      logger.warn('Already authenticated (not on login page)');
+      return;
+    }
+
+    logger.warn('On authentication page, filling credentials...');
+
+    // SAP IAS login form handling
+    // The login flow can be single-page or multi-step (username first, then password)
+    // Similar to wdi5's BTPAuthenticator two-step detection
+    try {
+      // Step 1: Try to find and fill username field
+      // SAP IAS uses various selectors depending on the version
+      const usernameSelectors = [
+        '#j_username',
+        'input[name="j_username"]',
+        'input[name="username"]',
+        'input[name="email"]',
+        'input[type="email"]',
+        '#logOnFormUsername',
+        'input[name="logOnFormUsername"]',
+        '#USERNAME_FIELD input',
+        'input[id*="username" i]',
+        'input[id*="email" i]'
+      ];
+
+      let usernameField = null;
+      for (const selector of usernameSelectors) {
+        try {
+          usernameField = await page.waitForSelector(selector, { timeout: 5000, state: 'visible' });
+          if (usernameField) {
+            logger.warn(`Found username field: ${selector}`);
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      if (!usernameField) {
+        // Take screenshot for debugging
+        if (this.config.headful) {
+          try {
+            await page.screenshot({ path: 'debug-login-page.png', fullPage: true });
+            logger.warn('Screenshot saved as debug-login-page.png');
+          } catch {}
+        }
+        throw new AuthenticationError('Could not find username field on SAP login page');
+      }
+
+      // Clear and fill username
+      await usernameField.click({ clickCount: 3 }); // Select all
+      await usernameField.fill(username);
+      logger.warn('Username entered');
+
+      // Check if password field is already visible (single-page form)
+      const passwordSelectors = [
+        '#j_password',
+        'input[name="j_password"]',
+        'input[name="password"]',
+        'input[type="password"]',
+        '#logOnFormPassword',
+        'input[name="logOnFormPassword"]',
+        '#PASSWORD_FIELD input',
+        'input[id*="password" i]'
+      ];
+
+      let passwordField = null;
+      for (const selector of passwordSelectors) {
+        try {
+          passwordField = await page.waitForSelector(selector, { timeout: 2000, state: 'visible' });
+          if (passwordField) {
+            logger.warn(`Found password field immediately: ${selector}`);
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      if (!passwordField) {
+        // Multi-step login: submit username first, then wait for password field
+        logger.warn('Password field not visible yet, submitting username first (multi-step login)...');
+
+        // Click continue/next button
+        const continueSelectors = [
+          'button[type="submit"]',
+          'input[type="submit"]',
+          '#logOnFormSubmit',
+          'button[id*="continue" i]',
+          'button[id*="next" i]',
+          'a[id*="continue" i]'
+        ];
+
+        for (const selector of continueSelectors) {
+          try {
+            const btn = await page.waitForSelector(selector, { timeout: 3000, state: 'visible' });
+            if (btn) {
+              await btn.click();
+              logger.warn(`Clicked continue button: ${selector}`);
+              break;
+            }
+          } catch {
+            continue;
+          }
+        }
+
+        // Wait for password field to appear
+        await page.waitForTimeout(2000);
+
+        for (const selector of passwordSelectors) {
+          try {
+            passwordField = await page.waitForSelector(selector, { timeout: 10000, state: 'visible' });
+            if (passwordField) {
+              logger.warn(`Found password field after username step: ${selector}`);
+              break;
+            }
+          } catch {
+            continue;
+          }
+        }
+
+        if (!passwordField) {
+          throw new AuthenticationError('Could not find password field after username submission');
+        }
+      }
+
+      // Fill password
+      await passwordField.click({ clickCount: 3 });
+      await passwordField.fill(password);
+      logger.warn('Password entered');
+
+      // Submit the login form
+      const submitSelectors = [
+        'button[type="submit"]',
+        'input[type="submit"]',
+        '#logOnFormSubmit',
+        'button[id*="login" i]',
+        'button[id*="signin" i]',
+        'button[id*="submit" i]'
+      ];
+
+      for (const selector of submitSelectors) {
+        try {
+          const btn = await page.waitForSelector(selector, { timeout: 3000, state: 'visible' });
+          if (btn) {
+            await btn.click();
+            logger.warn(`Clicked submit button: ${selector}`);
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      // Wait for MFA/2FA or redirect
+      // Using configurable timeout (default 120s) to allow manual 2FA entry
+      const mfaTimeout = this.config.mfaTimeout;
+
+      // Brief wait for page transition
+      await page.waitForTimeout(3000);
+
+      // Check if we're on a 2FA page
+      const postLoginUrl = page.url();
+      const postLoginTitle = await page.title();
+
+      if (this.isOnAuthPage(postLoginUrl, postLoginTitle)) {
+        // Check specifically for 2FA indicators
+        const is2FA = postLoginUrl.includes('two-factor') ||
+                     postLoginTitle.toLowerCase().includes('two-factor') ||
+                     postLoginTitle.toLowerCase().includes('verify') ||
+                     postLoginTitle.toLowerCase().includes('passcode') ||
+                     postLoginTitle.toLowerCase().includes('totp');
+
+        if (is2FA) {
+          logger.warn(`MFA/2FA detected! Please complete 2FA in the browser window (timeout: ${mfaTimeout / 1000}s)`);
+          logger.warn('If running headless, set HEADFUL=true to see the browser window for 2FA entry');
+        } else {
+          logger.warn('Still on auth page after login, waiting for redirect...');
+        }
+
+        await this.waitForAuthComplete(page, mfaTimeout);
+      }
+
+      logger.warn('Username/password authentication flow completed');
+
+    } catch (error) {
+      if (error instanceof AuthenticationError) throw error;
+      throw new AuthenticationError(
+        `Username/password authentication failed: ${error instanceof Error ? error.message : String(error)}`,
+        error as Error
+      );
+    }
+  }
+
+  /**
+   * Perform certificate-based authentication
+   */
+  private async authenticateWithCertificate(page: Page): Promise<void> {
+    logger.warn('Starting certificate authentication...');
+
+    const authUrl = 'https://me.sap.com/home';
+    const timeout = 30000;
+
+    const navigationPromise = page.goto(authUrl, {
+      waitUntil: 'domcontentloaded',
+      timeout
+    });
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new AuthenticationTimeoutError(timeout)), timeout);
+    });
+
+    await Promise.race([navigationPromise, timeoutPromise]);
+
+    // Wait for network to settle
+    try {
+      await page.waitForLoadState('networkidle', { timeout: 10000 });
+    } catch {
+      logger.warn('Network did not settle within 10s, continuing');
+    }
+
+    // Check if we need to wait for auth redirect
+    const currentUrl = page.url();
+    const pageTitle = await page.title();
+    logger.warn(`Current page: ${pageTitle} at ${currentUrl}`);
+
+    if (this.isOnAuthPage(currentUrl, pageTitle)) {
+      logger.warn('Still on auth page, waiting for certificate auth redirect...');
+      // Use MFA timeout to support 2FA even with certificate auth (as per PR #4)
+      await this.waitForAuthComplete(page, this.config.mfaTimeout);
+    }
+
+    logger.warn('Certificate authentication completed');
+  }
+
+  /**
+   * Perform the full authentication flow
    */
   private async authenticate(): Promise<void> {
     // First try to load cached token
     const cachedToken = this.loadCachedToken();
     if (cachedToken && this.isTokenValidFromCache(cachedToken)) {
-      logger.warn('🔄 Using cached SAP authentication token');
+      logger.warn('Using cached SAP authentication token');
       this.authState = {
         token: cachedToken.access_token,
         expiresAt: cachedToken.expiresAt,
@@ -299,269 +528,105 @@ export class SapAuthenticator {
       return;
     }
 
-    logger.warn('🔐 Starting SAP authentication flow...');
+    const authMethod = this.resolveAuthMethod();
+    logger.warn(`Starting SAP authentication flow (method: ${authMethod})...`);
 
     const startTime = Date.now();
-    
+
     try {
-      // Validate certificate first
-      await SapAuthenticator.validateCertificate(this.config.pfxPath, this.config.pfxPassphrase);
-      
-      // Check browser availability
       const browserLauncher = this.getBrowserLauncher();
       const browserType = process.env.PLAYWRIGHT_BROWSER_TYPE || 'chromium';
-      
+
       if (!(await SapAuthenticator.checkBrowserAvailable(browserType))) {
         throw new BrowserNotFoundError(browserType);
       }
 
-      logger.warn(`🔍 Using ${browserType} browser for authentication`);
-
-      // Prepare client certificate
-      const clientCertificate = this.prepareClientCertificate();
-
-      // Prepare browser launch options
+      // Launch browser
       const headless = process.env.HEADFUL !== 'true';
-      const launchOptions = {
-        headless,
-        ignoreHTTPSErrors: true
-      };
+      const launchOptions = { headless, ignoreHTTPSErrors: true };
 
-      logger.warn(`🚀 Launching browser (headless: ${headless})`);
-      
-      // Special handling for MCP mode - detect if we're running from Cursor
-      const isMcpMode = !process.stdin.isTTY || !process.stdout.isTTY || process.env.MCP_MODE === 'true';
-      if (isMcpMode && headless) {
-        logger.warn('⚠️ Running in MCP mode with headless browser - authentication may fail');
-        logger.warn('💡 Consider setting HEADFUL=true in your Cursor MCP configuration for debugging');
-      }
+      logger.warn(`Launching browser (headless: ${headless})`);
 
-      // Launch browser with retry logic for transient resource errors
-      logger.warn('🎬 Browser launching...');
-      logger.warn(`   Launch options: ${JSON.stringify(launchOptions, null, 2)}`);
-      
       const maxRetries = 3;
       let lastError: Error | null = null;
-      
+
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          logger.warn(`🚀 Browser launch attempt ${attempt}/${maxRetries}...`);
           this.browser = await browserLauncher.launch(launchOptions);
-          logger.warn(`✅ Browser launched successfully (attempt ${attempt}/${maxRetries})`);
+          logger.warn(`Browser launched (attempt ${attempt}/${maxRetries})`);
           break;
         } catch (error) {
           lastError = error as Error;
           const errorMsg = error instanceof Error ? error.message : String(error);
-          
-          // Log the FULL error details for debugging
-          logger.error(`❌ Browser launch failed (attempt ${attempt}/${maxRetries}):`);
-          logger.error(`   Error type: ${error instanceof Error ? error.name : 'Unknown'}`);
-          logger.error(`   Error message: ${errorMsg}`);
-          
-          if (error instanceof Error && error.stack) {
-            logger.error(`   Stack trace: ${error.stack}`);
-          }
-          
-          // Log additional error properties if available
-          if (error && typeof error === 'object') {
-            const errorObj = error as any;
-            if (errorObj.code) logger.error(`   Error code: ${errorObj.code}`);
-            if (errorObj.errno) logger.error(`   Error number: ${errorObj.errno}`);
-            if (errorObj.syscall) logger.error(`   System call: ${errorObj.syscall}`);
-            if (errorObj.path) logger.error(`   Path: ${errorObj.path}`);
-          }
-          
-          // Debug browser environment on first failure
-          if (attempt === 1) {
-            await SapAuthenticator.debugBrowserEnvironment(browserType);
-          }
-          
-          // Check if it's a resource exhaustion error
+          logger.error(`Browser launch failed (attempt ${attempt}/${maxRetries}): ${errorMsg}`);
+
           if (errorMsg.includes('pthread_create') || errorMsg.includes('Resource temporarily unavailable')) {
             if (attempt < maxRetries) {
-              const delayMs = Math.pow(2, attempt) * 1000; // Exponential backoff: 2s, 4s, 8s
-              logger.warn(`⚠️ Resource exhaustion detected, retrying in ${delayMs/1000}s...`);
+              const delayMs = Math.pow(2, attempt) * 1000;
+              logger.warn(`Resource exhaustion, retrying in ${delayMs / 1000}s...`);
               await new Promise(resolve => setTimeout(resolve, delayMs));
               continue;
             }
           }
-          
-          // Check for executable not found errors (common in Docker)
-          if (errorMsg.includes('Executable doesn\'t exist') || 
-              errorMsg.includes('ENOENT') ||
-              errorMsg.includes('No such file or directory')) {
-            logger.error(`💡 Browser executable issue detected. Common Docker/Alpine Linux fixes:`);
-            logger.error(`   1. Install Playwright browsers: npx playwright install chromium`);
-            logger.error(`   2. Install system dependencies: apk add chromium nss freetype harfbuzz`);
-            logger.error(`   3. Set PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH to system chromium`);
-            logger.error(`   4. Check if running in headless mode works: HEADFUL=false`);
-          }
-          
-          // Check for permission errors
-          if (errorMsg.includes('EACCES') || errorMsg.includes('Permission denied')) {
-            logger.error(`💡 Permission error detected. Common fixes:`);
-            logger.error(`   1. Check file permissions on browser executable`);
-            logger.error(`   2. Run with different user (non-root may be required)`);
-            logger.error(`   3. Check Docker container security settings`);
-          }
-          
-          // For Alpine Linux / Docker specific issues
-          if (errorMsg.includes('error while loading shared libraries')) {
-            logger.error(`💡 Shared library error detected. Alpine Linux fixes:`);
-            logger.error(`   1. Install missing dependencies: apk add ${errorMsg.match(/lib\w+\.so[\.\d]*/g)?.join(' ')}`);
-            logger.error(`   2. Install browser dependencies: apk add nss freetype harfbuzz ca-certificates`);
-          }
-          
-          // If max retries reached, don't retry
-          if (attempt >= maxRetries) {
-            logger.error(`❌ Max retries (${maxRetries}) reached. Browser launch failed permanently.`);
-            throw error;
-          }
-          
-          // Wait before retry
-          const delayMs = 1000;
-          logger.warn(`⏳ Retrying in ${delayMs/1000}s...`);
-          await new Promise(resolve => setTimeout(resolve, delayMs));
+
+          if (attempt >= maxRetries) throw error;
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
-      }
-      
-      if (!this.browser) {
-        const finalErrorMsg = `Failed to launch browser after ${maxRetries} attempts`;
-        logger.error(`❌ ${finalErrorMsg}`);
-        if (lastError) {
-          logger.error(`   Last error: ${lastError.message}`);
-        }
-        throw new Error(`${finalErrorMsg}: ${lastError?.message || 'Unknown error'}`);
       }
 
-      // Prepare context options
-      const contextOptions = {
+      if (!this.browser) {
+        throw new Error(`Failed to launch browser after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`);
+      }
+
+      // Create browser context
+      const contextOptions: any = {
         ignoreHTTPSErrors: true,
-        clientCertificates: [clientCertificate],
         locale: 'en-US',
         viewport: { width: 1280, height: 720 }
       };
 
-      logger.warn('🔧 Creating browser context with client certificate...');
-      // Create a new context with the client certificate
+      // Add client certificate only for certificate auth
+      if (authMethod === 'certificate') {
+        const clientCertificate = this.prepareClientCertificate();
+        contextOptions.clientCertificates = [clientCertificate];
+      }
+
       this.context = await this.browser.newContext(contextOptions);
-      logger.warn('✅ Browser context created');
-      
-      logger.warn('📄 Creating new page...');
       this.page = await this.context.newPage();
-      logger.warn('✅ Page created');
 
-      // Add event listeners for debugging
-      this.page.on('request', request => {
-        if (request.url().includes('sap.com')) {
-          logger.warn(`📤 Request: ${request.method()} ${request.url().substring(0, 100)}`);
-        }
-      });
-      
-      this.page.on('response', response => {
-        if (response.url().includes('sap.com')) {
-          logger.warn(`📥 Response: ${response.status()} ${response.url().substring(0, 100)}`);
-        }
-      });
-      
+      // Add debug event listeners
       this.page.on('dialog', dialog => {
-        logger.warn(`💬 Dialog appeared: ${dialog.type()} ${dialog.message()}`);
-        dialog.dismiss().catch(() => {}); // Dismiss any dialogs
-      });
-      
-      this.page.on('console', msg => {
-        if (msg.type() === 'error') {
-          logger.warn(`🔴 Browser error: ${msg.text()}`);
-        }
+        logger.warn(`Dialog appeared: ${dialog.type()} ${dialog.message()}`);
+        dialog.dismiss().catch(() => {});
       });
 
-      // Navigate to SAP IAS for authentication
-      const authUrl = 'https://me.sap.com/home';
-      logger.warn('🔑 Authenticating with SAP Identity Service...');
-      
-      const timeout = 30000; // 30 seconds - reduced from 60s
-      
-      const navigationPromise = this.page.goto(authUrl, {
-        waitUntil: 'domcontentloaded', // Less strict than networkidle
-        timeout
-      });
-      
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new AuthenticationTimeoutError(timeout)), timeout);
-      });
+      // Perform authentication based on method
+      if (authMethod === 'password') {
+        await this.authenticateWithPassword(this.page);
+      } else {
+        await this.authenticateWithCertificate(this.page);
+      }
 
-      await Promise.race([navigationPromise, timeoutPromise]);
-      
-      logger.warn('🔍 Page loaded, checking page state...');
-      
-      // Give it a moment to settle, then check for networkidle with shorter timeout
-      try {
-        logger.warn('⏳ Waiting for network activity to settle...');
-        await this.page.waitForLoadState('networkidle', { timeout: 10000 });
-        logger.warn('✅ Network settled');
-      } catch (error) {
-        logger.warn('⚠️ Network did not settle within 10s, continuing anyway');
-      }
-      
-      // Get page title and URL to understand where we are
-      const pageTitle = await this.page.title();
-      const currentUrl = this.page.url();
-      const currentUrlStr = currentUrl.toString();
-      logger.warn('📄 Current page:', { title: pageTitle, url: currentUrlStr });
-      
-      // Take a screenshot for debugging (if headful mode)
-      if (process.env.HEADFUL === 'true') {
-        try {
-          await this.page.screenshot({ path: 'debug-auth-page.png', fullPage: true });
-          logger.warn('📸 Screenshot saved as debug-auth-page.png');
-        } catch (e) {
-          logger.warn('📸 Could not take screenshot:', e);
-        }
-      }
-      
-      // Check if we're still on a login page or if we need to wait for redirects
-      if (currentUrlStr.includes('login') || currentUrlStr.includes('auth') || pageTitle.toLowerCase().includes('login')) {
-        logger.warn('🔄 Still on login page, waiting for authentication redirect...');
-        
-        // Wait for navigation to complete (e.g., after certificate selection)
-        try {
-          await this.page.waitForURL(url => !url.toString().includes('login') && !url.toString().includes('auth'), { 
-            timeout: 30000 
-          });
-          logger.warn('✅ Authentication redirect completed');
-        } catch (error) {
-          logger.warn('⚠️ No redirect detected, continuing with current page');
-        }
-      }
-      
-      logger.warn('✅ SAP IAS authentication completed');
-
-      // Wait a moment for any additional cookies to be set
-      logger.warn('⏳ Waiting for any additional authentication steps...');
+      // Wait a moment for cookies to be fully set
       await this.page.waitForTimeout(3000);
 
-      // Extract authenticated cookies from SAP session
-      logger.warn('🍪 Extracting authentication cookies from SAP session...');
-      
+      // Extract cookies
+      logger.warn('Extracting authentication cookies...');
       const allCookies = await this.context.cookies();
-      logger.warn(`🍪 Retrieved ${allCookies.length} cookies from SAP authentication`);
-      
-      // Create cookie string for API calls
-      const cookieString = allCookies.map(cookie => 
+      logger.warn(`Retrieved ${allCookies.length} cookies`);
+
+      const cookieString = allCookies.map(cookie =>
         `${cookie.name}=${cookie.value}`
       ).join('; ');
-      
-      // Calculate expiry time
+
       const expiresAt = Date.now() + (this.config.maxJwtAgeH * 60 * 60 * 1000);
 
-      // Save authentication state using cookie-based approach
       this.authState = {
         token: cookieString,
         expiresAt,
         isAuthenticated: true
       };
 
-      // Cache the cookies for future use
       this.saveCachedToken({
         access_token: cookieString,
         cookies: allCookies,
@@ -569,25 +634,21 @@ export class SapAuthenticator {
       });
 
       const duration = Date.now() - startTime;
-      logger.warn(`✅ SAP authentication completed successfully in ${duration}ms`);
+      logger.warn(`SAP authentication completed in ${duration}ms (method: ${authMethod})`);
 
     } catch (error) {
       logger.error('Authentication failed:', error);
-      if (error instanceof Error) {
-        logger.error('Error message:', error.message);
-      }
       this.authState = { isAuthenticated: false };
-      
-      // Re-throw with appropriate error type
-      if (error instanceof AuthenticationTimeoutError || 
-          error instanceof CertificateLoadError || 
-          error instanceof BrowserNotFoundError) {
+
+      if (error instanceof AuthenticationTimeoutError ||
+          error instanceof CertificateLoadError ||
+          error instanceof BrowserNotFoundError ||
+          error instanceof AuthenticationError) {
         throw error;
       } else {
         throw new AuthenticationError('Authentication process failed', error as Error);
       }
     } finally {
-      // Always clean up the browser
       await this.cleanup();
     }
   }
@@ -599,7 +660,7 @@ export class SapAuthenticator {
     if (this.browser) {
       try {
         await this.browser.close();
-        logger.warn('🧹 Browser session closed');
+        logger.warn('Browser session closed');
       } catch (closeError) {
         logger.error('Error closing browser:', closeError);
       } finally {
@@ -633,7 +694,6 @@ export class SapAuthenticator {
       return false;
     }
 
-    // Add 5 minute buffer before expiry
     const bufferMs = 5 * 60 * 1000;
     return Date.now() < (cachedToken.expiresAt - bufferMs);
   }
@@ -644,7 +704,7 @@ export class SapAuthenticator {
   private saveCachedToken(tokenData: any): void {
     try {
       writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(tokenData, null, 2));
-      logger.warn('💾 Token cached for future use');
+      logger.warn('Token cached for future use');
     } catch (error) {
       logger.warn('Failed to cache token:', error);
     }
@@ -656,15 +716,5 @@ export class SapAuthenticator {
   async destroy(): Promise<void> {
     this.authState = { isAuthenticated: false };
     await this.cleanup();
-    
-    // Clean up cached token
-    try {
-      if (existsSync(TOKEN_CACHE_FILE)) {
-        // Could delete the file or leave it for next time
-        // unlinkSync(TOKEN_CACHE_FILE);
-      }
-    } catch (error) {
-      logger.warn('Error cleaning up cache:', error);
-    }
   }
-} 
+}

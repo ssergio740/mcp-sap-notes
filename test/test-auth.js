@@ -94,85 +94,63 @@ async function testAuthentication() {
   console.log('');
 
   // Load configuration
-  const requiredEnvVars = ['PFX_PATH', 'PFX_PASSPHRASE'];
-  const missing = requiredEnvVars.filter(envVar => !process.env[envVar]);
-  
-  if (missing.length > 0) {
-    console.error(`❌ Missing required environment variables: ${missing.join(', ')}`);
+  const sapUsername = process.env.SAP_USERNAME;
+  const sapPassword = process.env.SAP_PASSWORD;
+  const hasCert = !!(process.env.PFX_PATH && process.env.PFX_PASSPHRASE);
+  const hasPassword = !!(sapUsername && sapPassword);
+
+  if (!hasCert && !hasPassword) {
+    console.error('❌ No authentication configured');
     console.log('\n📋 Setup checklist:');
-    console.log('1. Copy env.example to .env');
-    console.log('2. Place your SAP certificate in certs/sap.pfx'); 
-    console.log('3. Set PFX_PASSPHRASE in .env file');
+    console.log('Option A: Set SAP_USERNAME + SAP_PASSWORD in .env');
+    console.log('Option B: Set PFX_PATH + PFX_PASSPHRASE in .env');
     process.exit(1);
   }
 
+  const authMethod = process.env.AUTH_METHOD || 'auto';
+  console.log(`📋 Auth method: ${authMethod} (password: ${hasPassword}, certificate: ${hasCert})`);
+
   const config = {
-    port: parseInt(process.env.PORT || '3000'),
-    pfxPath: process.env.PFX_PATH,
-    pfxPassphrase: process.env.PFX_PASSPHRASE,
-    coveoOrg: process.env.COVEO_ORG || 'sapamericaproductiontyfzmfz0',
-    coveoHost: process.env.COVEO_HOST || 'platform.cloud.coveo.com',
+    pfxPath: process.env.PFX_PATH || '',
+    pfxPassphrase: process.env.PFX_PASSPHRASE || '',
+    sapUsername,
+    sapPassword,
+    authMethod,
+    mfaTimeout: parseInt(process.env.MFA_TIMEOUT || '120000'),
     maxJwtAgeH: parseInt(process.env.MAX_JWT_AGE_H || '12'),
     headful: process.env.HEADFUL === 'true',
     logLevel: process.env.LOG_LEVEL || 'info'
   };
 
   console.log('📋 Configuration:');
-  console.log(`   PFX Path: ${config.pfxPath}`);
-  console.log(`   Coveo Org: ${config.coveoOrg}`);
-  console.log(`   Coveo Host: ${config.coveoHost}`);
+  console.log(`   Auth Method: ${config.authMethod}`);
+  console.log(`   Has Password: ${hasPassword}`);
+  console.log(`   Has Certificate: ${hasCert}`);
   console.log(`   Max JWT Age: ${config.maxJwtAgeH}h`);
   console.log(`   Headful Mode: ${config.headful}`);
+  console.log(`   MFA Timeout: ${config.mfaTimeout}ms`);
   console.log('');
 
-  // Enhanced certificate validation
-  console.log('🔐 Certificate Validation:');
-  console.log(`   Checking path: ${config.pfxPath}`);
-  
-  if (!fs.existsSync(config.pfxPath)) {
-    console.error(`❌ Certificate file not found: ${config.pfxPath}`);
-    console.log('\n📋 Please ensure:');
-    console.log('1. Your SAP Passport certificate is placed at the specified path');
-    console.log('2. The file has .pfx extension');
-    console.log('3. The path in .env is correct');
-    
-    // List contents of certificate directory for debugging
-    const certDir = config.pfxPath.substring(0, config.pfxPath.lastIndexOf('/'));
-    if (fs.existsSync(certDir)) {
-      console.log(`\n🔍 Contents of ${certDir}:`);
-      try {
-        const certDirContents = fs.readdirSync(certDir);
-        certDirContents.forEach(file => {
-          console.log(`   ${file}`);
-        });
-      } catch (e) {
-        console.log(`   Error listing directory: ${e.message}`);
+  // Certificate validation (only if using certificate auth)
+  if (hasCert && config.pfxPath) {
+    console.log('🔐 Certificate Validation:');
+    console.log(`   Checking path: ${config.pfxPath}`);
+
+    if (!fs.existsSync(config.pfxPath)) {
+      console.warn(`⚠️ Certificate file not found: ${config.pfxPath}`);
+      if (!hasPassword) {
+        console.error('❌ No fallback - password auth not configured either');
+        process.exit(1);
+      } else {
+        console.log('   Will fall back to password authentication');
       }
+    } else {
+      const certStat = fs.statSync(config.pfxPath);
+      console.log(`   File size: ${certStat.size} bytes`);
+      console.log('✅ Certificate file found');
     }
-    
-    process.exit(1);
+    console.log('');
   }
-
-  // Check certificate file size and permissions
-  try {
-    const certStat = fs.statSync(config.pfxPath);
-    console.log(`   File size: ${certStat.size} bytes`);
-    console.log(`   File permissions: ${(certStat.mode & parseInt('777', 8)).toString(8)}`);
-    console.log(`   File modified: ${certStat.mtime.toISOString()}`);
-    
-    if (certStat.size === 0) {
-      console.error('❌ Certificate file is empty');
-      process.exit(1);
-    } else if (certStat.size < 100) {
-      console.warn('⚠️ Certificate file seems very small, please verify it is correct');
-    }
-    
-    console.log('✅ Certificate file found and validated');
-  } catch (e) {
-    console.error(`❌ Error accessing certificate file: ${e.message}`);
-    process.exit(1);
-  }
-  console.log('');
 
   const authenticator = new SapAuthenticator(config);
 
