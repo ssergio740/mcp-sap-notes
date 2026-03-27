@@ -2,17 +2,17 @@ import { z } from 'zod';
 
 /**
  * ============================================
- * SAP NOTE SEARCH SCHEMAS - ENHANCED VERSION
+ * SAP NOTE SCHEMAS
  * ============================================
- * 
- * These enhanced Zod schemas provide comprehensive descriptions,
- * validation constraints, and structured guidance to dramatically
- * improve LLM tool selection accuracy across weak, medium, and strong models.
+ *
+ * Tool names: "search" and "fetch"
+ * Zod schemas with descriptions for MCP SDK tool registration.
  */
 
+// ─── SEARCH ────────────────────────────────────────────────────────────────
+
 /**
- * Input schema shape for sap_note_search (for MCP SDK)
- * Enhanced with comprehensive descriptions, examples, and validation
+ * Input schema for the "search" tool
  */
 export const NoteSearchInputSchema = {
   q: z
@@ -20,454 +20,291 @@ export const NoteSearchInputSchema = {
     .min(2, "Query must be at least 2 characters")
     .max(200, "Query must be less than 200 characters")
     .describe(
-      `Search query: Specific error codes, transaction codes, component names, or issue descriptions. Use concise SAP terminology (2-6 words).
+      `Search query for SAP Notes. Use specific SAP terminology: error codes, transaction codes, component names, or concise issue descriptions (2-6 words).
 
-Examples of effective queries:
-• "OData gateway error" - Specific error with context
-• "MM02 material master dump" - Transaction + module + issue
-• "ABAP CX_SY_ZERODIVIDE" - Specific exception class
-• "S/4HANA migration performance" - Product + issue
-• "Note 2744792" - Direct note ID lookup
-• "error 415 CAP" - Error code + technology
-• "Fiori launchpad not loading" - Specific symptom
+Examples:
+• "OData gateway error 415"
+• "MM02 material master dump"
+• "ABAP CX_SY_ZERODIVIDE"
+• "S/4HANA migration performance"
+• "2744792" — direct note ID lookup
+• "Fiori launchpad not loading"
 
-Query construction tips:
-• Include error codes, transaction codes, or component names
-• Use SAP terminology (not generic terms)
-• Be specific but concise (2-6 words typically)
-• Format: [Error Code/Transaction] + [Module/Component] + [Issue Type]
-
-Avoid vague queries like: "SAP problem", "not working", "help"`
+Formula: [Error/Transaction] + [Module] + [Issue]
+Avoid vague queries like "SAP problem" or "not working".`
     ),
-  
+
   lang: z
     .enum(['EN', 'DE'])
     .default('EN')
     .describe(
-      `Language code for search results and note content.
-• EN (English) - Default and recommended, most comprehensive coverage
-• DE (German) - Available for German-language notes
-
-Use EN unless user specifically requests German content.`
+      `Language for results. EN (default, broadest coverage) or DE (German).`
     ),
 };
 
 /**
- * Output schema shape for individual note in search results
+ * Output schema — single search result
  */
 export const NoteSearchResultSchema = {
   id: z
     .string()
-    .min(1, "Note ID cannot be empty")
-    .describe(
-      `SAP Note ID (typically 6-8 digits, but may vary). Use this ID with sap_note_get() to fetch the complete note content with detailed solution steps.
+    .min(1)
+    .describe('SAP Note ID. Pass to fetch() for full content.'),
 
-Examples: "2744792", "438342", "3089413"`
-    ),
-  
-  title: z
-    .string()
-    .describe(
-      'Note title/subject summarizing the issue, problem, or topic the note addresses'
-    ),
-  
-  summary: z
-    .string()
-    .describe(
-      'Brief summary (1-3 sentences) describing what the note covers and what problem it solves'
-    ),
-  
+  title: z.string().describe('Note title summarizing the issue or topic.'),
+
+  summary: z.string().describe('1-3 sentence overview of the note.'),
+
   component: z
     .string()
     .nullable()
-    .describe(
-      `SAP component this note relates to (e.g., 'CA-UI5', 'MM-IM', 'FI-GL', 'BC-CST-IC').
+    .describe('SAP component (e.g. "CA-UI5", "MM-IM"). null if unspecified.'),
 
-Component format: [Application Area]-[Module]-[Submodule]
-• CA = Cross-Application
-• MM = Materials Management
-• FI = Financial Accounting
-• BC = Basis Components
-• etc.
+  releaseDate: z.string().describe('Publication or last-update date (ISO 8601).'),
 
-null if component is not specified.`
-    ),
-  
-  releaseDate: z
-    .string()
-    .describe(
-      'Date when the note was published or last updated, in ISO 8601 format (YYYY-MM-DD or full timestamp)'
-    ),
-  
-  language: z
-    .string()
-    .describe('Language of the note content (EN for English, DE for German)'),
-  
+  language: z.string().describe('Content language: EN or DE.'),
+
   url: z
     .string()
     .url()
-    .describe(
-      'Direct URL to view the full note on SAP Support Portal (requires S-user credentials to access)'
-    ),
+    .describe('URL to view the note on SAP Support Portal (S-user required).'),
 };
 
 /**
- * Complete output schema shape for sap_note_search (for MCP SDK)
+ * Output schema — complete search response
  */
 export const NoteSearchOutputSchema = {
   totalResults: z
     .number()
     .int()
     .min(0)
-    .describe(
-      `Total number of SAP Notes found matching the search query.
+    .describe('Total matching notes. 0 → try different terms.'),
 
-• 0 results: Try different search terms or use sap_help_search instead
-• 1-5 results: High relevance, likely good matches
-• 6+ results: Multiple relevant notes found
+  query: z.string().describe('Executed search query (for reference).'),
 
-Results are ranked by relevance (best matches first).`
-    ),
-  
-  query: z
-    .string()
-    .describe('The exact search query that was executed (for reference and debugging)'),
-  
   results: z
     .array(z.object(NoteSearchResultSchema))
-    .describe(
-      `Array of matching SAP Notes, ranked by relevance (best matches first).
-
-Typical workflow after getting results:
-1. Review the first 2-5 results
-2. Identify the most relevant note IDs based on title and summary
-3. Use sap_note_get(id) to fetch full content for top 2-3 notes
-4. Synthesize the solution from the detailed note content
-
-Do NOT fetch all notes - only retrieve details for the most relevant ones.`
-    ),
+    .describe('Matching notes ranked by relevance. Fetch the top 2-3, not all.'),
 };
 
-/**
- * ============================================
- * SAP NOTE GET SCHEMAS - ENHANCED VERSION
- * ============================================
- */
+// ─── FETCH ─────────────────────────────────────────────────────────────────
 
 /**
- * Input schema shape for sap_note_get (for MCP SDK)
- * Enhanced with validation and examples
+ * Input schema for the "fetch" tool
  */
 export const NoteGetInputSchema = {
   id: z
     .string()
     .min(1, "Note ID cannot be empty")
-    .regex(/^[0-9A-Za-z]+$/, "Note ID must contain only alphanumeric characters")
+    .regex(/^[0-9A-Za-z]+$/, "Note ID must be alphanumeric")
     .describe(
-      `SAP Note ID: Typically 6-8 digits, but may include letters or vary in length.
-
-Valid examples:
-• "2744792" (7 digits)
-• "438342" (6 digits)
-• "12345678" (8 digits)
-• "123ABC" (mixed alphanumeric)
-
-Invalid examples:
-• "Note 2744792" (contains text prefix - extract ID only)
-• "" (empty)
-
-If user input includes text (e.g., "Note 2744792" or "SAP Note 2744792"), extract only the ID portion before calling this tool.`
+      `SAP Note ID (digits, e.g. "2744792"). Extract from user text if needed ("Note 2744792" → "2744792").`
     ),
-  
+
   lang: z
     .enum(['EN', 'DE'])
     .default('EN')
-    .describe(
-      `Language code for note content.
-• EN (English) - Default, recommended for most cases
-• DE (German) - Use if note exists in German and user requests it
+    .describe('Language for content. EN (default) or DE.'),
 
-Note: Not all notes are available in both languages.`
+  includeCorrections: z
+    .boolean()
+    .default(false)
+    .describe(
+      `When true, fetches detailed correction instructions via an additional OData call (software components, ABAP objects modified, prerequisites per correction). This adds a few seconds. Use when the user asks about patches, SNOTE corrections, or which objects a note changes.`
     ),
 };
 
 /**
- * Output schema shape for sap_note_get (for MCP SDK)
+ * Output schema for the "fetch" tool
  */
 export const NoteGetOutputSchema = {
-  id: z
-    .string()
-    .describe('SAP Note ID (6-8 digits) that was fetched'),
-  
-  title: z
-    .string()
-    .describe('Full note title describing the issue, error, or topic'),
-  
-  summary: z
-    .string()
-    .describe(
-      'Executive summary of the note content (high-level overview of the problem and solution)'
-    ),
-  
+  id: z.string().describe('SAP Note ID.'),
+
+  title: z.string().describe('Full note title.'),
+
+  summary: z.string().describe('High-level overview of problem and solution.'),
+
   component: z
     .string()
     .nullable()
-    .describe(
-      `SAP component code this note relates to (e.g., 'CA-UI5-CTR' for UI5 controls, 'MM-IM' for Inventory Management).
+    .describe('SAP component code (e.g. "FI-GL-GL"). null if unspecified.'),
 
-Format: [Area]-[Module]-[Submodule]
+  componentText: z
+    .string()
+    .nullable()
+    .optional()
+    .describe('Human-readable component description.'),
 
-null if not specified.`
-    ),
-  
   priority: z
     .string()
     .nullable()
-    .describe(
-      `Note priority level indicating urgency:
-• "Very High" - Critical issues, security vulnerabilities
-• "High" - Important fixes, significant bugs
-• "Medium" - Standard corrections and improvements
-• "Low" - Minor issues, cosmetic fixes
-• "Recommendation" - Best practices, optimization tips
+    .describe('Priority: Very High / High / Medium / Low / Recommendation. null if unset.'),
 
-null if priority is not assigned.`
-    ),
-  
   category: z
     .string()
     .nullable()
-    .describe(
-      `Note category/type indicating the nature of the note:
-• "Correction" - Bug fixes, error corrections
-• "Consulting" - Implementation guidance, best practices
-• "Performance" - Performance optimization tips
-• "Security" - Security patches, vulnerability fixes
-• "Master Data" - Data migration, master data issues
-• etc.
+    .describe('Category: Correction, Consulting, Performance, Security, etc. null if unset.'),
 
-null if category is not specified.`
-    ),
-  
-  releaseDate: z
+  version: z
     .string()
-    .describe(
-      'Date when note was published or last updated (ISO 8601 format: YYYY-MM-DD or full timestamp)'
-    ),
-  
-  language: z
+    .nullable()
+    .optional()
+    .describe('Note version number.'),
+
+  status: z
     .string()
-    .describe('Language of the note content (EN or DE)'),
-  
+    .nullable()
+    .optional()
+    .describe('Release status of the note.'),
+
+  releaseDate: z.string().describe('Publication / last-update date (ISO 8601).'),
+
+  language: z.string().describe('Content language: EN or DE.'),
+
   url: z
     .string()
     .url()
-    .describe(
-      'Direct URL to view the note on SAP Support Portal. Share this link with users so they can access the official source.'
-    ),
-  
+    .describe('SAP Support Portal URL. Share with users.'),
+
   content: z
     .string()
     .describe(
-      `Full HTML content of the SAP Note including all sections:
-
-Typical sections in note content:
-• Symptom - Description of the problem/error
-• Reason and Prerequisites - Root cause analysis
-• Solution - Detailed step-by-step instructions to resolve the issue
-• Affected Releases - Which SAP versions are impacted
-• Related Notes - Links to other relevant notes
-• Additional Information - Extra context, warnings, or tips
-
-Important: This is raw HTML content. You should:
-1. Parse the HTML to extract key sections
-2. Summarize the Symptom and Solution for the user
-3. Keep technical details but make them readable
-4. Preserve any code snippets, configuration steps, or warnings
-5. If content is very long (>5000 chars), focus on Symptom and Solution sections
-
-Do not return raw HTML to the user - extract and format the relevant information.`
+      `Full note content (cleaned text). Contains sections like Symptom, Reason, Solution, Affected Releases. Summarize Symptom + Solution for the user; preserve code snippets and config steps.`
     ),
+
+  // Enriched metadata (all optional — available when the Detail API returns them)
+  validity: z
+    .array(z.object({
+      softwareComponent: z.string(),
+      versionFrom: z.string(),
+      versionTo: z.string(),
+    }))
+    .optional()
+    .describe('Software component version ranges this note applies to.'),
+
+  supportPackages: z
+    .array(z.object({
+      softwareComponent: z.string(),
+      name: z.string(),
+      level: z.string().optional(),
+    }))
+    .optional()
+    .describe('Support Packages that include this fix.'),
+
+  references: z
+    .object({
+      referencesTo: z.array(z.object({
+        noteNumber: z.string(),
+        title: z.string(),
+        noteType: z.string().optional(),
+      })).optional(),
+      referencedBy: z.array(z.object({
+        noteNumber: z.string(),
+        title: z.string(),
+        noteType: z.string().optional(),
+      })).optional(),
+    })
+    .optional()
+    .describe('Cross-references to/from other SAP Notes.'),
+
+  prerequisites: z
+    .array(z.object({
+      noteNumber: z.string(),
+      title: z.string(),
+    }))
+    .optional()
+    .describe('Prerequisite notes that must be applied first.'),
+
+  sideEffects: z
+    .object({
+      causing: z.array(z.object({ noteNumber: z.string(), title: z.string() })).optional(),
+      solving: z.array(z.object({ noteNumber: z.string(), title: z.string() })).optional(),
+    })
+    .optional()
+    .describe('Notes causing or solving side effects related to this note.'),
+
+  correctionsInfo: z
+    .object({
+      totalCorrections: z.number().optional(),
+      totalManualActivities: z.number().optional(),
+      totalPrerequisites: z.number().optional(),
+    })
+    .optional()
+    .describe('Summary counts: corrections, manual activities, prerequisites.'),
+
+  correctionsSummary: z
+    .array(z.object({
+      softwareComponent: z.string(),
+      pakId: z.string(),
+      count: z.number().optional(),
+    }))
+    .optional()
+    .describe('Per-software-component correction instruction summary.'),
+
+  correctionDetails: z
+    .array(z.object({
+      softwareComponent: z.string(),
+      versionFrom: z.string(),
+      versionTo: z.string(),
+      sapNotesNumber: z.string(),
+      sapNotesTitle: z.string(),
+      objects: z.array(z.object({
+        objectName: z.string(),
+        objectType: z.string(),
+      })).optional(),
+      prerequisites: z.array(z.object({
+        noteNumber: z.string(),
+        title: z.string(),
+      })).optional(),
+    }))
+    .optional()
+    .describe('Detailed correction instructions (only when includeCorrections=true). Lists affected ABAP objects and per-correction prerequisites.'),
+
+  manualActions: z
+    .string()
+    .optional()
+    .describe('Manual activity instructions (HTML) if the note requires manual steps.'),
+
+  attachments: z
+    .array(z.object({
+      filename: z.string(),
+      url: z.string().optional(),
+    }))
+    .optional()
+    .describe('File attachments included with the note.'),
+
+  downloadUrl: z
+    .string()
+    .optional()
+    .describe('SNOTE download URL for automatic correction import.'),
 };
 
-/**
- * ============================================
- * COMPREHENSIVE TOOL DESCRIPTIONS
- * ============================================
- * 
- * These are the comprehensive descriptions that will be exposed
- * to LLMs via the MCP protocol to improve tool selection accuracy.
- */
+// ─── TOOL DESCRIPTIONS ─────────────────────────────────────────────────────
 
-export const SAP_NOTE_SEARCH_DESCRIPTION = `Search SAP Knowledge Base (SAP Notes) for troubleshooting articles, bug fixes, patches, corrections, and known issues. Returns a ranked list of matching notes with metadata.
+export const SAP_NOTE_SEARCH_DESCRIPTION = `Search the SAP Knowledge Base for SAP Notes — official articles documenting bugs, fixes, patches, corrections, security vulnerabilities, and known issues.
 
-SAP Notes are official support articles that document:
-• Known bugs and their fixes
-• Patches and corrections for SAP software
-• Troubleshooting guides for specific errors
-• Performance optimization tips
-• Security vulnerabilities and patches
-• Missing or incorrect functionality
+USE WHEN the user mentions errors, bugs, fixes, patches, dumps, unexpected behavior, or references a specific SAP Note number.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-USE WHEN:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• User mentions "error", "issue", "bug", "problem", "not working"
-• User asks about "fixes", "patches", "corrections"
-• User reports unexpected behavior or incorrect functionality
-• User mentions specific error codes (e.g., "error 415", "dump ABAP_EXCEPTION")
-• User asks "why isn't this working?" or "how to fix?"
-• User references a specific Note ID (e.g., "Note 2744792")
+DO NOT USE for "how to configure/set up" questions (use sap_help_search), tutorials, or general "what is" questions.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-DO NOT USE WHEN:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• User asks "how to configure" or "how to set up" → use sap_help_search instead
-• User wants implementation guides or best practices → use sap_help_search instead
-• User asks about product features or capabilities → use sap_help_search instead
-• User wants training materials or tutorials → use sap_community_search instead
-• User asks general "what is" questions → use sap_help_search instead
+WORKFLOW:
+1. search(q="OData 415 error CAP") → ranked results
+2. fetch(id="2744792") → full content with solution
+3. Synthesize answer
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-QUERY CONSTRUCTION:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Effective queries should:
-1. Include specific error codes, messages, or transaction codes
-2. Use SAP terminology (not generic terms)
-3. Be concise (2-6 words typically)
-4. Include product/module context if known
+QUERY TIPS — be specific:
+  Good: "error 415 CAP action", "CX_SY_ZERODIVIDE ABAP", "S/4HANA migration performance"
+  Bad: "SAP problem", "not working", "help"`;
 
-Query Formula: [Error Code/Transaction] + [Module/Component] + [Issue Type]
+export const SAP_NOTE_GET_DESCRIPTION = `Fetch the complete content and metadata of a specific SAP Note by its ID. Returns the full note text (Symptom, Solution, Affected Releases), plus enriched metadata: validity ranges, support packages, references, prerequisites, side effects, correction instruction summaries, and attachments.
 
-Examples:
-  ✓ GOOD:
-    • "error 415 CAP action" (specific error + context)
-    • "MM02 material master dump" (transaction + module + issue)
-    • "ABAP CX_SY_ZERODIVIDE" (specific exception class)
-    • "S/4HANA migration performance" (product + issue)
-    • "Note 2744792" (direct note ID lookup)
-  
-  ✗ BAD:
-    • "how to configure SAP" (too vague, use sap_help_search)
-    • "mm22" (transaction only, no issue context)
-    • "I have a problem" (no specifics)
-    • "SAP not working" (too generic)
+Set includeCorrections=true to also retrieve detailed correction instructions via an additional OData call — this lists every affected ABAP object (TADIR entries) and per-correction prerequisites. Adds a few seconds; use when the user asks about SNOTE corrections, patching, or which objects are changed.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-WORKFLOW PATTERN:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. Call sap_note_search(q="your query") to find relevant notes
-2. Review results array for relevant note IDs
-3. Call sap_note_get(id="note_id") for detailed content of top 2-3 notes
-4. Synthesize answer from fetched note content
+USE AFTER search() returns relevant note IDs. Fetch only the top 2-3 results, not all.
 
-Example Chain:
-  sap_note_search(q="OData gateway error")
-  → Returns: [{id: "2744792", title: "OData Gateway 415 Error"}, ...]
-  → Then call: sap_note_get(id="2744792")
-  → Returns: Full note content with solution
+PARAMETER: id — alphanumeric Note ID only (e.g. "2744792"). Strip any "Note" or "SAP Note" prefix.`;
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-IMPORTANT NOTES:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• SAP Notes require S-user credentials to access full content
-• Note IDs are typically alphanumeric (e.g., "2744792", "438342", "123ABC")
-• Results are ranked by relevance (best matches first)
-• Empty results suggest trying sap_help_search instead
-• Language parameter defaults to English (EN)`;
-
-export const SAP_NOTE_GET_DESCRIPTION = `Fetch complete content and metadata for a specific SAP Note by ID. Returns full HTML content, solution details, and all metadata.
-
-SAP Notes contain:
-• Detailed problem description
-• Step-by-step solution instructions
-• Root cause analysis
-• Affected releases/versions
-• Related notes and references
-• Corrections and patches
-• Implementation guides
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-USE WHEN:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• You have a Note ID from sap_note_search results
-• User asks for details about a specific note (e.g., "get details for note 2744792")
-• You need full solution steps, not just the summary
-• User wants to see the complete note content
-• You're following the search → get workflow pattern
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-DO NOT USE WHEN:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• You don't have a specific Note ID (use sap_note_search first)
-• User hasn't asked for detailed note content (summaries may suffice)
-• Note ID is invalid (contains spaces or special characters)
-• You're just browsing/searching (use sap_note_search instead)
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PARAMETER REQUIREMENTS:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Note ID Format:
-• Typically alphanumeric characters only
-• No spaces, no prefixes
-• Valid examples: "2744792", "438342", "3089413", "123ABC"
-• Invalid examples: "Note 2744792", "SAP Note 2744792", ""
-
-If user input includes text, extract the ID only:
-  "Note 2744792" → "2744792"
-  "SAP Note 438342" → "438342"
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-WORKFLOW PATTERN:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Typical usage flow:
-
-1. Search for relevant notes:
-   sap_note_search(q="OData 415 error")
-   
-2. Review search results, identify relevant note IDs:
-   Results: [{id: "2744792", ...}, {id: "438342", ...}]
-   
-3. Fetch full content for top 2-3 relevant notes:
-   sap_note_get(id="2744792")
-   sap_note_get(id="438342")
-   
-4. Synthesize solution from full note content
-
-Do NOT fetch all notes - only get details for the most relevant 2-3.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ERROR HANDLING:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Common errors and solutions:
-
-• "Note ID must contain only alphanumeric characters"
-  → Validate ID format before calling
-  → Extract alphanumeric ID only from user input
-  
-• "Note not found"
-  → Note ID doesn't exist or is invalid
-  → Try searching again with different terms
-  
-• "Access denied"
-  → Some notes require special S-user permissions
-  → Inform user to access directly on SAP Support Portal
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-BEST PRACTICES:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. Always validate Note ID format (alphanumeric) before calling
-2. Only fetch notes that are clearly relevant from search results
-3. Limit to 2-3 note fetches per user query
-4. Parse and summarize the HTML content field for users
-5. Include the note URL in your response
-6. Extract key sections: Symptom, Solution, Affected Releases`;
-
-/**
- * ============================================
- * TYPE EXPORTS (for TypeScript type inference)
- * ============================================
- */
+// ─── TYPE EXPORTS ──────────────────────────────────────────────────────────
 
 export type NoteSearchInput = z.infer<z.ZodObject<typeof NoteSearchInputSchema>>;
 export type NoteSearchOutput = z.infer<z.ZodObject<typeof NoteSearchOutputSchema>>;

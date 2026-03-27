@@ -137,7 +137,7 @@ class SapNoteMcpServer {
   private setupTools(): void {
     // SAP Note Search Tool
     this.mcpServer.registerTool(
-      'sap_note_search',
+      'search',
       {
         title: 'Search SAP Notes',
         description: SAP_NOTE_SEARCH_DESCRIPTION,
@@ -145,8 +145,8 @@ class SapNoteMcpServer {
         outputSchema: NoteSearchOutputSchema
       },
       async ({ q, lang = 'EN' }) => {
-        logger.info(`🔎 [sap_note_search] Starting search for query: "${q}"`);
-        
+        logger.info(`🔎 [search] Starting search for query: "${q}"`);
+
         try {
           const searchResponse = await this.withAuthRetry(token =>
             this.sapNotesClient.searchNotes(q, token, 10)
@@ -169,7 +169,7 @@ class SapNoteMcpServer {
 
           // Format display text
           let resultText = `Found ${output.totalResults} SAP Note(s) for query: "${output.query}"\n\n`;
-          
+
           for (const note of output.results) {
             resultText += `**SAP Note ${note.id}**\n`;
             resultText += `Title: ${note.title}\n`;
@@ -180,7 +180,7 @@ class SapNoteMcpServer {
             resultText += `URL: ${note.url}\n\n`;
           }
 
-          logger.info(`✅ [sap_note_search] Successfully completed search, returning ${output.totalResults} results`);
+          logger.info(`✅ [search] Successfully completed search, returning ${output.totalResults} results`);
 
           return {
             content: [{ type: 'text', text: resultText }],
@@ -190,11 +190,11 @@ class SapNoteMcpServer {
         } catch (error) {
           logger.error('❌ Search failed:', error);
           const errorMessage = error instanceof Error ? error.message : 'Unknown search error';
-          
+
           return {
-            content: [{ 
-              type: 'text', 
-              text: `Search failed: ${errorMessage}` 
+            content: [{
+              type: 'text',
+              text: `Search failed: ${errorMessage}`
             }],
             isError: true
           };
@@ -202,18 +202,18 @@ class SapNoteMcpServer {
       }
     );
 
-    // SAP Note Get Tool
+    // SAP Note Fetch Tool
     this.mcpServer.registerTool(
-      'sap_note_get',
+      'fetch',
       {
-        title: 'Get SAP Note Details',
+        title: 'Fetch SAP Note',
         description: SAP_NOTE_GET_DESCRIPTION,
         inputSchema: NoteGetInputSchema,
         outputSchema: NoteGetOutputSchema
       },
-      async ({ id, lang = 'EN' }) => {
-        logger.info(`📄 [sap_note_get] Getting note details for ID: ${id}`);
-        
+      async ({ id, lang = 'EN', includeCorrections = false }) => {
+        logger.info(`📄 [fetch] Getting note details for ID: ${id} (includeCorrections=${includeCorrections})`);
+
         try {
           const noteDetail = await this.withAuthRetry(token =>
             this.sapNotesClient.getNote(id, token)
@@ -221,40 +221,95 @@ class SapNoteMcpServer {
 
           if (!noteDetail) {
             return {
-              content: [{ 
-                type: 'text', 
-                text: `SAP Note ${id} not found or not accessible.` 
+              content: [{
+                type: 'text',
+                text: `SAP Note ${id} not found or not accessible.`
               }],
               isError: true
             };
+          }
+
+          // Optionally fetch correction instruction details via OData
+          if (includeCorrections && noteDetail.correctionsSummary && noteDetail.correctionsSummary.length > 0) {
+            try {
+              const corrections = await this.withAuthRetry(token =>
+                this.sapNotesClient.getCorrectionDetails(id, noteDetail.correctionsSummary!, token)
+              );
+              if (corrections && corrections.length > 0) {
+                (noteDetail as any).correctionDetails = corrections;
+              }
+            } catch (corrError) {
+              logger.warn(`⚠️ Correction details fetch failed (non-fatal): ${corrError instanceof Error ? corrError.message : String(corrError)}`);
+            }
           }
 
           // Parse HTML content into clean text with sections
           const parsed = parseNoteContent(noteDetail.content);
 
           // Structure the output — use plain text instead of raw HTML
-          const output = {
+          const output: Record<string, any> = {
             id: noteDetail.id,
             title: noteDetail.title,
             summary: noteDetail.summary,
             component: noteDetail.component || null,
+            componentText: noteDetail.componentText || null,
             priority: noteDetail.priority || null,
             category: noteDetail.category || null,
+            version: noteDetail.version || null,
+            status: noteDetail.status || null,
             releaseDate: noteDetail.releaseDate,
             language: noteDetail.language,
             url: noteDetail.url,
             content: parsed.plainText || noteDetail.content
           };
 
+          // Add enriched metadata only when present
+          if (noteDetail.validity?.length) output.validity = noteDetail.validity;
+          if (noteDetail.supportPackages?.length) output.supportPackages = noteDetail.supportPackages;
+          if (noteDetail.supportPackagePatches?.length) output.supportPackagePatches = noteDetail.supportPackagePatches;
+          if (noteDetail.references) output.references = noteDetail.references;
+          if (noteDetail.prerequisites?.length) output.prerequisites = noteDetail.prerequisites;
+          if (noteDetail.sideEffects) output.sideEffects = noteDetail.sideEffects;
+          if (noteDetail.correctionsInfo) output.correctionsInfo = noteDetail.correctionsInfo;
+          if (noteDetail.correctionsSummary?.length) output.correctionsSummary = noteDetail.correctionsSummary;
+          if ((noteDetail as any).correctionDetails?.length) output.correctionDetails = (noteDetail as any).correctionDetails;
+          if (noteDetail.manualActions) output.manualActions = noteDetail.manualActions;
+          if (noteDetail.attachments?.length) output.attachments = noteDetail.attachments;
+          if (noteDetail.downloadUrl) output.downloadUrl = noteDetail.downloadUrl;
+
           // Format display text
           let resultText = `**SAP Note ${output.id} - ${output.title}**\n\n`;
-          resultText += `Component: ${output.component || 'Not specified'} | `;
+          resultText += `Component: ${output.componentText || output.component || 'Not specified'} | `;
           resultText += `Priority: ${output.priority || 'Not specified'} | `;
-          resultText += `Released: ${output.releaseDate}\n`;
-          resultText += `URL: ${output.url}\n\n`;
+          resultText += `Category: ${output.category || 'Not specified'} | `;
+          resultText += `Released: ${output.releaseDate}`;
+          if (output.version) resultText += ` | Version: ${output.version}`;
+          resultText += `\nURL: ${output.url}\n\n`;
           resultText += output.content + '\n';
 
-          logger.info(`✅ [sap_note_get] Successfully retrieved note ${id}`);
+          // Append enriched metadata summary
+          if (output.validity?.length) {
+            resultText += `\n**Validity:** ${output.validity.map((v: any) => `${v.softwareComponent} ${v.versionFrom}-${v.versionTo}`).join(', ')}\n`;
+          }
+          if (output.correctionsInfo) {
+            const ci = output.correctionsInfo;
+            resultText += `\n**Corrections:** ${ci.totalCorrections ?? '?'} corrections, ${ci.totalManualActivities ?? 0} manual activities, ${ci.totalPrerequisites ?? 0} prerequisites\n`;
+          }
+          if (output.prerequisites?.length) {
+            resultText += `\n**Prerequisites:** ${output.prerequisites.map((p: any) => `Note ${p.noteNumber}`).join(', ')}\n`;
+          }
+          if (output.correctionDetails?.length) {
+            resultText += `\n**Correction Details (${output.correctionDetails.length} entries):**\n`;
+            for (const cd of output.correctionDetails) {
+              resultText += `  • ${cd.softwareComponent} ${cd.versionFrom}-${cd.versionTo}`;
+              if (cd.objects?.length) {
+                resultText += ` — ${cd.objects.length} objects (${cd.objects.slice(0, 3).map((o: any) => `${o.objectType} ${o.objectName}`).join(', ')}${cd.objects.length > 3 ? '...' : ''})`;
+              }
+              resultText += '\n';
+            }
+          }
+
+          logger.info(`✅ [fetch] Successfully retrieved note ${id}`);
 
           return {
             content: [{ type: 'text', text: resultText }],
@@ -264,11 +319,11 @@ class SapNoteMcpServer {
         } catch (error) {
           logger.error(`❌ Note retrieval failed for ${id}:`, error);
           const errorMessage = error instanceof Error ? error.message : 'Unknown retrieval error';
-          
+
           return {
-            content: [{ 
-              type: 'text', 
-              text: `Failed to retrieve SAP Note ${id}: ${errorMessage}` 
+            content: [{
+              type: 'text',
+              text: `Failed to retrieve SAP Note ${id}: ${errorMessage}`
             }],
             isError: true
           };

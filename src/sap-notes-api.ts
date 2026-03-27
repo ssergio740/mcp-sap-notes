@@ -18,6 +18,30 @@ export interface SapNoteSearchResponse {
   query: string;
 }
 
+export interface SapNoteReference {
+  noteNumber: string;
+  title: string;
+  noteType?: string;
+}
+
+export interface SapNoteValidity {
+  softwareComponent: string;
+  versionFrom: string;
+  versionTo: string;
+}
+
+export interface SapNoteSupportPackage {
+  softwareComponent: string;
+  name: string;
+  level?: string;
+}
+
+export interface SapNoteCorrectionSummary {
+  softwareComponent: string;
+  pakId: string;
+  count?: number;
+}
+
 export interface SapNoteDetail {
   id: string;
   title: string;
@@ -26,9 +50,34 @@ export interface SapNoteDetail {
   language: string;
   releaseDate: string;
   component?: string;
+  componentText?: string;
   priority?: string;
   category?: string;
+  version?: string;
+  status?: string;
   url: string;
+  // Enriched metadata from Detail API
+  validity?: SapNoteValidity[];
+  supportPackages?: SapNoteSupportPackage[];
+  supportPackagePatches?: SapNoteSupportPackage[];
+  references?: {
+    referencedBy?: SapNoteReference[];
+    referencesTo?: SapNoteReference[];
+  };
+  prerequisites?: SapNoteReference[];
+  sideEffects?: {
+    causing?: SapNoteReference[];
+    solving?: SapNoteReference[];
+  };
+  correctionsSummary?: SapNoteCorrectionSummary[];
+  manualActions?: string;
+  correctionsInfo?: {
+    totalCorrections?: number;
+    totalManualActivities?: number;
+    totalPrerequisites?: number;
+  };
+  attachments?: Array<{ filename: string; url?: string }>;
+  downloadUrl?: string;
 }
 
 /**
@@ -294,6 +343,21 @@ export class SapNotesApiClient {
       logger.warn('SAP Notes API health check failed:', errorMessage);
       return false;
     }
+  }
+
+  /**
+   * Fetch detailed correction instructions for a note via the CorrIns OData service.
+   * Returns an array of correction entries with affected objects and prerequisites.
+   * This is an optional enrichment — failures are non-fatal.
+   */
+  async getCorrectionDetails(
+    noteId: string,
+    correctionsSummary: SapNoteCorrectionSummary[],
+    token: string
+  ): Promise<any[]> {
+    // Stub — will be implemented in Phase 2
+    logger.debug(`getCorrectionDetails called for note ${noteId} — not yet implemented`);
+    return [];
   }
 
   /**
@@ -1266,8 +1330,155 @@ export class SapNotesApiClient {
   }
 
   /**
-   * Get SAP Note details using Playwright to handle authentication and JavaScript
+   * Extract enriched metadata from the SAP Note Detail API response.
+   * All extraction is best-effort — if any section fails, the rest still proceeds.
    */
+  private extractEnrichedMetadata(sapNote: any, detail: SapNoteDetail): void {
+    // Validity (software component version ranges)
+    try {
+      const validityItems = sapNote.Validity?.Items;
+      if (Array.isArray(validityItems) && validityItems.length > 0) {
+        detail.validity = validityItems.map((item: any) => ({
+          softwareComponent: item.Name?.value || item.SoftwareComponentID?.value || '',
+          versionFrom: item.VersionFrom?.value || '',
+          versionTo: item.VersionTo?.value || ''
+        })).filter((v: SapNoteValidity) => v.softwareComponent);
+      }
+    } catch (e) { logger.debug(`Validity extraction skipped: ${e}`); }
+
+    // Support Packages
+    try {
+      const spItems = sapNote.SupportPackage?.Items;
+      if (Array.isArray(spItems) && spItems.length > 0) {
+        detail.supportPackages = spItems.map((item: any) => ({
+          softwareComponent: item.Name?.value || item.SoftwareComponentID?.value || '',
+          name: item.SupportPackageName?.value || item.SPName?.value || '',
+          level: item.Level?.value
+        })).filter((sp: SapNoteSupportPackage) => sp.softwareComponent);
+      }
+    } catch (e) { logger.debug(`SupportPackage extraction skipped: ${e}`); }
+
+    // Support Package Patches
+    try {
+      const sppItems = sapNote.SupportPackagePatch?.Items;
+      if (Array.isArray(sppItems) && sppItems.length > 0) {
+        detail.supportPackagePatches = sppItems.map((item: any) => ({
+          softwareComponent: item.Name?.value || item.SoftwareComponentID?.value || '',
+          name: item.SupportPackagePatchName?.value || item.SPPName?.value || '',
+          level: item.Level?.value
+        })).filter((sp: SapNoteSupportPackage) => sp.softwareComponent);
+      }
+    } catch (e) { logger.debug(`SupportPackagePatch extraction skipped: ${e}`); }
+
+    // References (referencedBy + referencesTo)
+    try {
+      const refs: SapNoteDetail['references'] = {};
+      const refTo = sapNote.References?.RefTo?.Items;
+      if (Array.isArray(refTo) && refTo.length > 0) {
+        refs.referencesTo = refTo.map((item: any) => ({
+          noteNumber: item.SAPNoteNumber?.value || item.Number?.value || '',
+          title: item.Title?.value || '',
+          noteType: item.Type?.value
+        })).filter((r: SapNoteReference) => r.noteNumber);
+      }
+      const refBy = sapNote.References?.RefBy?.Items;
+      if (Array.isArray(refBy) && refBy.length > 0) {
+        refs.referencedBy = refBy.map((item: any) => ({
+          noteNumber: item.SAPNoteNumber?.value || item.Number?.value || '',
+          title: item.Title?.value || '',
+          noteType: item.Type?.value
+        })).filter((r: SapNoteReference) => r.noteNumber);
+      }
+      if (refs.referencesTo || refs.referencedBy) {
+        detail.references = refs;
+      }
+    } catch (e) { logger.debug(`References extraction skipped: ${e}`); }
+
+    // Prerequisites
+    try {
+      const preItems = sapNote.Preconditions?.Items;
+      if (Array.isArray(preItems) && preItems.length > 0) {
+        detail.prerequisites = preItems.map((item: any) => ({
+          noteNumber: item.SAPNoteNumber?.value || item.Number?.value || '',
+          title: item.Title?.value || ''
+        })).filter((p: SapNoteReference) => p.noteNumber);
+      }
+    } catch (e) { logger.debug(`Prerequisites extraction skipped: ${e}`); }
+
+    // Side Effects
+    try {
+      const sideEffects: SapNoteDetail['sideEffects'] = {};
+      const causing = sapNote.SideEffects?.SideEffectsCausing?.Items;
+      if (Array.isArray(causing) && causing.length > 0) {
+        sideEffects.causing = causing.map((item: any) => ({
+          noteNumber: item.SAPNoteNumber?.value || item.Number?.value || '',
+          title: item.Title?.value || ''
+        })).filter((s: SapNoteReference) => s.noteNumber);
+      }
+      const solving = sapNote.SideEffects?.SideEffectsSolving?.Items;
+      if (Array.isArray(solving) && solving.length > 0) {
+        sideEffects.solving = solving.map((item: any) => ({
+          noteNumber: item.SAPNoteNumber?.value || item.Number?.value || '',
+          title: item.Title?.value || ''
+        })).filter((s: SapNoteReference) => s.noteNumber);
+      }
+      if (sideEffects.causing || sideEffects.solving) {
+        detail.sideEffects = sideEffects;
+      }
+    } catch (e) { logger.debug(`SideEffects extraction skipped: ${e}`); }
+
+    // Correction Instructions summary (from Detail API — just the list, not the OData detail)
+    try {
+      const corrItems = sapNote.CorrectionInstructions?.Items;
+      if (Array.isArray(corrItems) && corrItems.length > 0) {
+        detail.correctionsSummary = corrItems.map((item: any) => ({
+          softwareComponent: item.Name?.value || item.SoftwareComponentName?.value || '',
+          pakId: item.URL?.value?.match(/corrins\/\d+\/(\d+)/)?.[1] || item.PakId?.value || '',
+          count: item.Count?.value ? parseInt(item.Count.value, 10) : undefined
+        })).filter((c: SapNoteCorrectionSummary) => c.softwareComponent);
+      }
+    } catch (e) { logger.debug(`CorrectionInstructions summary extraction skipped: ${e}`); }
+
+    // Manual Actions
+    try {
+      const manualActions = sapNote.ManualActions?.value;
+      if (manualActions && typeof manualActions === 'string' && manualActions.trim()) {
+        detail.manualActions = manualActions;
+      }
+    } catch (e) { logger.debug(`ManualActions extraction skipped: ${e}`); }
+
+    // Corrections Info (summary counts)
+    try {
+      const corrInfo = sapNote.CorrectionsInfo;
+      if (corrInfo) {
+        detail.correctionsInfo = {
+          totalCorrections: corrInfo.TotalCorrections?.value ? parseInt(corrInfo.TotalCorrections.value, 10) : undefined,
+          totalManualActivities: corrInfo.TotalManualActivities?.value ? parseInt(corrInfo.TotalManualActivities.value, 10) : undefined,
+          totalPrerequisites: corrInfo.TotalPrerequisites?.value ? parseInt(corrInfo.TotalPrerequisites.value, 10) : undefined
+        };
+      }
+    } catch (e) { logger.debug(`CorrectionsInfo extraction skipped: ${e}`); }
+
+    // Attachments
+    try {
+      const attachItems = sapNote.Attachments?.Items;
+      if (Array.isArray(attachItems) && attachItems.length > 0) {
+        detail.attachments = attachItems.map((item: any) => ({
+          filename: item.Filename?.value || item.Name?.value || 'unknown',
+          url: item.URL?.value
+        }));
+      }
+    } catch (e) { logger.debug(`Attachments extraction skipped: ${e}`); }
+
+    // Download URL
+    try {
+      const downloadUrl = sapNote.Actions?.Download?.url;
+      if (downloadUrl) {
+        detail.downloadUrl = downloadUrl;
+      }
+    } catch (e) { logger.debug(`DownloadURL extraction skipped: ${e}`); }
+  }
+
   /**
    * Ensure the persistent browser is available and has cookies loaded.
    * Shared by Coveo token Playwright fallback and note retrieval.
@@ -1386,23 +1597,35 @@ export class SapNotesApiClient {
              if (jsonData.Response && jsonData.Response.SAPNote) {
                const sapNote = jsonData.Response.SAPNote;
                const header = sapNote.Header || {};
-               
+
                logger.info(`📄 Extracting SAP Note data from API response`);
-               
-               return {
+
+               const detail: SapNoteDetail = {
                  id: header.Number?.value || noteId,
                  title: sapNote.Title?.value || `SAP Note ${noteId}`,
                  summary: header.Type?.value || 'SAP Knowledge Base Article',
                  content: sapNote.LongText?.value || 'No content available',
                  language: header.Language?.value || 'EN',
                  releaseDate: header.ReleasedOn?.value || 'Unknown',
-                 component: header.SAPComponentKeyText?.value || header.SAPComponentKey?.value,
+                 component: header.SAPComponentKey?.value,
+                 componentText: header.SAPComponentKeyText?.value,
                  priority: header.Priority?.value,
                  category: header.Category?.value,
+                 version: header.Version?.value,
+                 status: header.Status?.value,
                  url: `https://launchpad.support.sap.com/#/notes/${noteId}`
                };
+
+               // Extract enriched metadata (all wrapped in try/catch so main extraction always succeeds)
+               try {
+                 this.extractEnrichedMetadata(sapNote, detail);
+               } catch (enrichError) {
+                 logger.warn(`⚠️ Enriched metadata extraction failed (non-fatal): ${enrichError instanceof Error ? enrichError.message : String(enrichError)}`);
+               }
+
+               return detail;
              }
-             
+
              // Fallback to generic JSON parsing for other structures
              return {
                id: jsonData.SapNote || jsonData.id || noteId,
@@ -1436,23 +1659,34 @@ export class SapNotesApiClient {
              if (jsonData.Response && jsonData.Response.SAPNote) {
                const sapNote = jsonData.Response.SAPNote;
                const header = sapNote.Header || {};
-               
+
                logger.info(`📄 Extracting SAP Note data from HTML body API response`);
-               
-               return {
+
+               const detail: SapNoteDetail = {
                  id: header.Number?.value || noteId,
                  title: sapNote.Title?.value || `SAP Note ${noteId}`,
                  summary: header.Type?.value || 'SAP Knowledge Base Article',
                  content: sapNote.LongText?.value || 'No content available',
                  language: header.Language?.value || 'EN',
                  releaseDate: header.ReleasedOn?.value || 'Unknown',
-                 component: header.SAPComponentKeyText?.value || header.SAPComponentKey?.value,
+                 component: header.SAPComponentKey?.value,
+                 componentText: header.SAPComponentKeyText?.value,
                  priority: header.Priority?.value,
                  category: header.Category?.value,
+                 version: header.Version?.value,
+                 status: header.Status?.value,
                  url: `https://launchpad.support.sap.com/#/notes/${noteId}`
                };
+
+               try {
+                 this.extractEnrichedMetadata(sapNote, detail);
+               } catch (enrichError) {
+                 logger.warn(`⚠️ Enriched metadata extraction failed (non-fatal): ${enrichError instanceof Error ? enrichError.message : String(enrichError)}`);
+               }
+
+               return detail;
              }
-             
+
              // Fallback to generic JSON parsing
              return {
                id: jsonData.SapNote || jsonData.id || noteId,
