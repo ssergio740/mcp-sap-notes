@@ -1,6 +1,6 @@
 # SAP Note Search MCP Server
 
-> **MCP server for searching SAP Notes/KB articles using SAP Passport authentication and Playwright automation**
+> **MCP server for searching and retrieving SAP Notes / KB articles with full metadata extraction**
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org/)
@@ -9,342 +9,332 @@
 > [!CAUTION]
 > **This MCP Server uses private APIs from SAP behind authentication. Please check whether the use violates SAP's ToS. The author assumes no liability for this. Because of this i do not guarantee that the server will always work.**
 
-This Model Context Protocol (MCP) server provides direct access to SAP Notes and Knowledge Base articles through Cursor AI. It uses SAP Passport certificate authentication and Playwright browser automation to retrieve actual note content from SAP's systems.
-
-## ✨ Features
-
-- 🔍 **Direct SAP Note access** - Retrieve full note content and metadata
-- 🎫 **SAP Passport authentication** - Secure certificate-based authentication
-- 🤖 **Playwright automation** - Handles complex SAP authentication flows
-- 💾 **Smart caching** - Authentication tokens cached locally
-- 🔧 **Debug-friendly** - Comprehensive logging and troubleshooting options
-- 📋 **MCP compliant** - Works seamlessly with Cursor AI
-- 🎯 **Enhanced LLM Tool Descriptions** - Comprehensive tool documentation for improved AI accuracy
-  - **40-60% improvement** in tool selection accuracy across different AI models
-  - **Structured guidance** with USE WHEN/DO NOT USE sections
-  - **Query construction tips** and examples
-  - **Workflow patterns** for optimal tool chaining
-  - **Dramatically improved support** for weaker AI models (Ollama, GPT-4o-mini)
+This [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server gives AI coding assistants (Cursor, Claude Desktop, VS Code, etc.) direct access to SAP Notes and Knowledge Base articles. It authenticates with SAP via **username/password** or **SAP Passport certificate** and uses Playwright browser automation to retrieve actual note content.
 
 ## Live Preview in Cursor
 
 ![Cursor MCP Server Preview](./images/mcpsapnote.gif)
 
+## Features
 
+- **Two MCP tools** — `search` (find notes) and `fetch` (retrieve full content + metadata)
+- **Enriched metadata** — validity ranges, support packages, references, prerequisites, side effects, correction summaries, attachments
+- **Optional correction details** — `fetch(includeCorrections=true)` retrieves detailed ABAP correction instructions (affected objects, per-correction prerequisites) via an additional OData call
+- **Two auth methods** — username/password (recommended) or SAP Passport certificate
+- **MFA/2FA support** — manual code entry in headful mode
+- **Smart caching** — session cookies cached locally (configurable TTL)
+- **Docker support** — pre-built image with all Playwright dependencies
 
-## 🚀 Quick Start
+---
+
+## Quick Start
 
 ### Prerequisites
 
-- **Node.js 18+** - [Download here](https://nodejs.org/)
-- **SAP Passport Certificate** - Your personal .pfx certificate file
-- **Cursor AI** - [Download here](https://cursor.sh/)
+- **Node.js 18+** — [Download here](https://nodejs.org/)
+- **SAP S-User** — with access to SAP Support Portal / me.sap.com
+- **An MCP client** — [Cursor](https://cursor.sh/), [Claude Desktop](https://claude.ai/download), VS Code with Copilot, etc.
 
 ### Installation
 
-1. **Clone the repository**
+```bash
+git clone https://github.com/marianfoo/mcp-sap-notes
+cd mcp-sap-notes
+npm install
+npm run build
+```
+
+---
+
+## Authentication
+
+The server supports two methods. Choose whichever is easier for you.
+
+### Option 1: Username / Password (Recommended)
+
+The simplest approach — no certificate management required.
+
+```env
+SAP_USERNAME=your.email@company.com
+SAP_PASSWORD=your_sap_password
+```
+
+Or pass credentials directly in your MCP client config (no `.env` file needed):
+
+```json
+{
+  "mcpServers": {
+    "sap-notes": {
+      "command": "node",
+      "args": ["/path/to/mcp-sap-notes/dist/mcp-server.js"],
+      "env": {
+        "SAP_USERNAME": "your.email@company.com",
+        "SAP_PASSWORD": "your_sap_password"
+      }
+    }
+  }
+}
+```
+
+### Option 2: SAP Passport Certificate
+
+Uses a `.pfx` client certificate for TLS-level authentication.
+
+1. Download your certificate from [SAP Passport](https://support.sap.com/en/my-support/single-sign-on-passports.html)
+2. Place the `.pfx` file in `certs/`:
    ```bash
-   git clone https://github.com/marianfoo/mcp-sap-notes
-   cd mcp-sap-notes
+   mkdir -p certs
+   cp ~/Downloads/sap.pfx certs/
    ```
-
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
-
-3. **Build the project**
-   ```bash
-   npm run build
-   ```
-
-### Setup
-
-1. **Get your SAP Passport certificate - Only possible for S-User**
-   - Go to [SAP Passport](https://support.sap.com/en/my-support/single-sign-on-passports.html)
-   - Create your certificate
-   - Download the .pfx certificate file
-
-
-2. **Create certificate directory**
-   - macOS/Linux:
-     ```bash
-     mkdir certs
-     ```
-   - Windows (PowerShell):
-     ```powershell
-     New-Item -ItemType Directory -Force -Path certs | Out-Null
-     ```
-
-3. **Copy your SAP Passport certificate**
-   - Place your `.pfx` certificate file in the `certs/` directory
-   - Name it `sap.pfx` (or update the path in configuration)
-
-4. **Configure environment**
-   - macOS/Linux:
-     ```bash
-     cp .env.example .env
-     ```
-   - Windows (PowerShell):
-     ```powershell
-     Copy-Item .env.example .env
-     ```
-   
-   Edit `.env` and add your certificate passphrase:
+3. Configure:
    ```env
    PFX_PATH=./certs/sap.pfx
-   PFX_PASSPHRASE=your_actual_passphrase
+   PFX_PASSPHRASE=your_certificate_passphrase
    ```
 
-### Connect to Cursor
+### Auto Mode (Default)
 
-1. **Open Cursor settings** (`Cmd/Ctrl + ,`)
+When `AUTH_METHOD=auto` (the default), the server picks the first available method:
 
-2. **Add MCP server configuration** to your `settings.json` (default):
-   ```json
-   {
-     "mcpServers": {
-       "sap-note-search": {
-         "command": "node",
-         "args": ["/full/path/to/mcp-sap-notes/dist/mcp-server.js"]
-       }
-     }
-   }
-   ```
+1. **Password** — if `SAP_USERNAME` + `SAP_PASSWORD` are set
+2. **Certificate** — if `PFX_PATH` + `PFX_PASSPHRASE` are set
+3. **Error** — if neither is configured
 
-   Alternative:
-   ```json
-   {
-     "mcpServers": {
-       "sap-note-search": {
-         "command": "node",
-         "args": ["/full/path/to/mcp-sap-notes/dist/mcp-server.js"]
-       }
-     }
-   }
-   ```
+You can force a method with `AUTH_METHOD=password` or `AUTH_METHOD=certificate`.
 
-   **⚠️ Important:** Replace the project path with your actual absolute path.
-   - On Windows, use a full path like `C:\\Users\\you\\mcp-sap-notes\\dist\\mcp-server.js`.
-   - On macOS/Linux, use a path like `/Users/you/mcp-sap-notes/dist/mcp-server.js`.
+### MFA / 2FA
 
-3. **Restart Cursor** - The SAP Note tools will appear in your AI assistant
+If your SAP account uses two-factor authentication:
 
-## 🎯 Usage Examples
-
-### Search for a specific SAP Note
+```env
+HEADFUL=true       # show the browser window so you can enter the code
+MFA_TIMEOUT=120000 # wait up to 2 minutes for code entry (ms)
 ```
+
+The server detects TOTP, passcode, and verification pages automatically and waits for you to complete the challenge.
+
+### Token Caching
+
+After successful login, session cookies are cached to `token-cache.json` (default TTL: 12 hours, configurable via `MAX_JWT_AGE_H`). Delete the file to force re-authentication.
+
+---
+
+## Connect to your MCP Client
+
+### Cursor / Claude Desktop
+
+Add to your MCP settings (`settings.json` or `claude_desktop_config.json`):
+
+**With username/password (recommended):**
+```json
+{
+  "mcpServers": {
+    "sap-notes": {
+      "command": "node",
+      "args": ["/full/path/to/mcp-sap-notes/dist/mcp-server.js"],
+      "env": {
+        "SAP_USERNAME": "your.email@company.com",
+        "SAP_PASSWORD": "your_sap_password"
+      }
+    }
+  }
+}
+```
+
+**With certificate (via .env file):**
+```json
+{
+  "mcpServers": {
+    "sap-notes": {
+      "command": "node",
+      "args": ["/full/path/to/mcp-sap-notes/dist/mcp-server.js"]
+    }
+  }
+}
+```
+
+> **Note:** Replace the path with your actual absolute path. On Windows use `C:\\Users\\you\\...`, on macOS/Linux use `/Users/you/...`.
+
+After adding the config, restart your MCP client. The tools will appear in the AI assistant.
+
+---
+
+## Available Tools
+
+### `search`
+
+Search SAP Notes by keyword, error code, component, or note number.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `q` | string | Yes | — | Search query (2-200 chars) |
+| `lang` | `EN` \| `DE` | No | `EN` | Language |
+
+**Examples:**
+```
+Search for SAP Notes about "OData gateway error 415"
 Find SAP Note 2744792
 ```
 
-### Search by keywords
-```
-Search for SAP Notes about "OData gateway metadata error"
-```
+### `fetch`
 
-### Get complete note details
+Retrieve full content and enriched metadata for a specific SAP Note.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `id` | string | Yes | — | Note ID (alphanumeric) |
+| `lang` | `EN` \| `DE` | No | `EN` | Language |
+| `includeCorrections` | boolean | No | `false` | Fetch detailed ABAP correction instructions via OData |
+
+**Returns** (beyond the basic content):
+- Software component validity ranges
+- Support packages and patches
+- Cross-references (to/from other notes)
+- Prerequisites, side effects
+- Correction instruction summaries and counts
+- Manual activity instructions
+- Attachments and SNOTE download URL
+- *(with `includeCorrections=true`)* Detailed correction entries with affected ABAP objects (TADIR) and per-correction prerequisites
+
+**Examples:**
 ```
 Get the full content of SAP Note 2744792
+Show me note 3481252 with correction details
 ```
 
-## 🛠️ Testing & Development
+---
 
-### Test Authentication
-```bash
-npm run test:auth
-```
-This tests the SAP Passport authentication flow and verifies your certificate setup.
+## Docker
 
-### Test API Access
-```bash
-npm run test:api
-```
-This tests the SAP Notes API integration and content extraction.
-
-### Test Complete MCP Server
-```bash
-npm run test:mcp
-```
-This simulates the complete MCP server workflow.
-
-### Run All Tests
-```bash
-npm run test
-```
-
-## 🐛 Troubleshooting
-
-### Certificate Issues
-
-**Error: "Certificate file not found"**
-- Ensure the certificate path in your configuration is correct
-- Use full absolute paths in Cursor's `settings.json`
-- Verify the certificate file exists and is readable
-
-**Error: "Authentication failed"**
-- Check your certificate passphrase is correct
-- Ensure your SAP Passport certificate is valid and not expired
-- Try running with `HEADFUL=true` to see browser authentication
-
-### Browser Issues
-
-**Error: "Browser launch failed"**
-```bash
-# Install Playwright browsers
-npx playwright install
-```
-
-**Authentication hangs or times out**
-- Run with debug mode: `HEADFUL=true npm run test:auth`
-- Check your network connection to SAP systems
-- Verify your certificate has proper SAP system access
-
-### MCP Integration Issues
-
-**Tools not appearing in Cursor**
-- Restart Cursor completely
-- Check the MCP server path in `settings.json` is absolute
-- Verify the `cwd` setting points to your project directory
-
-**Error: "MCP server failed to start"**
-- Check the console output in Cursor's developer tools
-- Ensure all dependencies are installed: `npm install`
-- Verify the build completed successfully: `npm run build`
-
-**Server starts but immediately exits**
-- This issue has been resolved in recent versions
-- Ensure you're using the latest version: `git pull && npm run build`
-- Try setting `AUTO_START=true` for HTTP server if issues persist
-
-### Debug Mode
-
-Enable debug mode for detailed troubleshooting:
+A Dockerfile is included with all Playwright/Chromium dependencies pre-installed:
 
 ```bash
-# macOS/Linux
-export HEADFUL=true
-export LOG_LEVEL=debug
-npm run test:auth
-
-# Windows (PowerShell)
-$env:HEADFUL = 'true'
-$env:LOG_LEVEL = 'debug'
-npm run test:auth
+docker build -t mcp-sap-notes .
+docker run -it \
+  -e SAP_USERNAME="your.email@company.com" \
+  -e SAP_PASSWORD="your_sap_password" \
+  mcp-sap-notes
 ```
 
-## 📁 Project Structure
+---
 
-```
-sap-note-search-mcp/
-├── src/
-│   ├── mcp-server.ts        # Main MCP server (stdio)
-│   ├── http-mcp-server.ts   # HTTP MCP server
-│   ├── auth.ts              # SAP authentication
-│   ├── sap-notes-api.ts     # SAP Notes API client
-│   ├── schemas/
-│   │   └── sap-notes.ts     # Enhanced Zod schemas with comprehensive descriptions
-│   ├── types.ts             # TypeScript definitions
-│   └── logger.ts            # Logging configuration
-├── test/
-│   ├── test-auth.js         # Authentication tests
-│   ├── test-sap-api.js      # API tests
-│   └── test-mcp-server.js   # Complete server tests
-├── dist/                    # Compiled JavaScript
-├── certs/                   # Certificate directory
-├── .env.example             # Environment template
-└── README.md               # This file
-```
-
-## ⚙️ Configuration
+## Configuration Reference
 
 ### Environment Variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `PFX_PATH` | ✅ | - | Path to SAP Passport certificate (.pfx) |
-| `PFX_PASSPHRASE` | ✅ | - | Certificate passphrase |
-| `ACCESS_TOKEN` | ❌ | - | Bearer token for HTTP server authentication |
-| `HTTP_PORT` | ❌ | `3123` | HTTP server port |
-| `MAX_JWT_AGE_H` | ❌ | `12` | Token cache lifetime (hours) |
-| `HEADFUL` | ❌ | `false` | Browser visibility (for debugging) |
-| `LOG_LEVEL` | ❌ | `info` | Logging level (debug, info, warn, error) |
+| `SAP_USERNAME` | * | — | SAP login username (email) |
+| `SAP_PASSWORD` | * | — | SAP login password |
+| `PFX_PATH` | * | — | Path to SAP Passport `.pfx` certificate |
+| `PFX_PASSPHRASE` | * | — | Certificate passphrase |
+| `AUTH_METHOD` | No | `auto` | `auto`, `password`, or `certificate` |
+| `MFA_TIMEOUT` | No | `120000` | 2FA wait timeout in ms |
+| `MAX_JWT_AGE_H` | No | `12` | Token cache lifetime in hours |
+| `HEADFUL` | No | `false` | Show browser window (for debugging / 2FA) |
+| `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
+| `HTTP_PORT` | No | `3002` | Port for HTTP MCP transport |
+| `ACCESS_TOKEN` | No | — | Bearer token for HTTP server auth |
 
-### Playwright Configuration
+\* At least one auth pair is required: either `SAP_USERNAME` + `SAP_PASSWORD` **or** `PFX_PATH` + `PFX_PASSPHRASE`.
 
-The server automatically installs required Playwright dependencies. For manual installation:
+### HTTP Server
+
+An HTTP/SSE transport is also available for remote or multi-client setups:
 
 ```bash
-npx playwright install chromium
+npm run serve:http          # start HTTP server
+npm run serve:http:debug    # with debug logging
 ```
 
-## 🔒 Security
+Protect with a bearer token:
+```env
+ACCESS_TOKEN=your-secret-token
+```
 
-- **Certificate Security**: Your SAP Passport certificate never leaves your machine
-- **Token Caching**: Authentication tokens are cached locally and expire automatically
-- **No Data Storage**: SAP Note content is retrieved on-demand, not stored
-- **Secure Communication**: All SAP API calls use HTTPS with certificate authentication
-- **Bearer Token Auth**: HTTP server supports optional bearer token authentication for securing the MCP endpoint
+Clients must then include `Authorization: Bearer your-secret-token` in every request.
 
-### HTTP Server Authentication
+---
 
-The HTTP MCP server supports simple bearer token authentication. To use it:
+## Testing & Development
 
-0. **Start the HTTP server** (default):
-   ```bash
-   HTTP_PORT=3123 npm run serve:http
-   ```
+```bash
+npm run test:auth         # test authentication flow
+npm run test:api          # test SAP Notes API
+npm run test:mcp          # test full MCP server
+npm run test              # run all tests
+```
 
-1. **Set the ACCESS_TOKEN environment variable** in your `.env` file:
-   ```env
-   ACCESS_TOKEN=your-secret-token-here
-   ```
+Debug mode:
+```bash
+HEADFUL=true LOG_LEVEL=debug npm run test:auth
+```
 
-2. **Clients must include an authentication header** in all requests (either format works):
-   ```bash
-   # Standard format
-   curl -X POST http://localhost:3123/mcp \
-     -H "Authorization: Bearer your-secret-token-here" \
-     -H "Content-Type: application/json" \
-     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
-   ```
+---
 
-3. **Generate a secure token** (recommended):
-   ```bash
-   # macOS/Linux
-   openssl rand -base64 32
-   
-   # Node.js
-   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-   ```
+## Project Structure
 
-4. **Without ACCESS_TOKEN**: If `ACCESS_TOKEN` is not set, the server runs without authentication (not recommended for production or public deployments).
+```
+mcp-sap-notes/
+├── src/
+│   ├── mcp-server.ts          # Main MCP server (stdio transport)
+│   ├── http-mcp-server.ts     # HTTP/SSE MCP transport
+│   ├── auth.ts                # SAP authentication (password + certificate)
+│   ├── sap-notes-api.ts       # SAP Notes API client + OData corrections
+│   ├── html-utils.ts          # HTML-to-text parsing
+│   ├── schemas/
+│   │   └── sap-notes.ts       # Zod schemas + tool descriptions
+│   ├── types.ts               # TypeScript definitions
+│   └── logger.ts              # Logging
+├── docs/
+│   ├── tools.md               # Detailed tool reference
+│   ├── authentication.md      # Auth deep dive
+│   ├── architecture.md        # Architecture overview
+│   └── setup.md               # Setup guide
+├── test/                      # Test scripts
+├── dist/                      # Compiled JS
+├── certs/                     # Certificate directory
+├── Dockerfile                 # Docker image
+├── env.example                # Environment template
+└── README.md
+```
 
-**Authentication behavior:**
-- ✅ Valid token → Request processed
-- ❌ Missing token → HTTP 401 Unauthorized
-- ❌ Invalid token → HTTP 401 Unauthorized
-- ⚠️ No ACCESS_TOKEN set → Warning logged, authentication disabled
+## Troubleshooting
 
-## 📋 Available Tools
+### Authentication
 
-### `sap_note_search`
-Search SAP Notes and KB articles by note ID or keywords.
+| Symptom | Fix |
+|---------|-----|
+| "Could not find username field" | SAP login page may have changed — try `HEADFUL=true` to inspect |
+| "Authentication timed out" | Check connectivity; increase `MFA_TIMEOUT` if using 2FA |
+| "Certificate load failed" | Verify `.pfx` path + passphrase; check expiry |
 
-**Parameters:**
-- `q` (string, required): Query string or Note ID
-- `lang` (string, optional): Language code ("EN" or "DE"), defaults to "EN"
+### Browser
 
-### `sap_note_get`
-Retrieve full content and metadata for a specific SAP Note.
+| Symptom | Fix |
+|---------|-----|
+| "Browser launch failed" | Run `npx playwright install chromium` |
+| Hangs during auth | Use `HEADFUL=true` to see what's happening |
 
-**Parameters:**
-- `id` (string, required): SAP Note ID (6-8 digits)
-- `lang` (string, optional): Language code ("EN" or "DE"), defaults to "EN"
+### MCP Client
 
-## 🤝 Contributing
+| Symptom | Fix |
+|---------|-----|
+| Tools not showing | Restart client; verify absolute path in config |
+| "MCP server failed to start" | Check `npm run build` succeeded; check deps with `npm install` |
+
+See [docs/authentication.md](docs/authentication.md) for detailed troubleshooting.
+
+---
+
+## Contributing
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/amazing-feature`
 3. Commit your changes: `git commit -m 'Add amazing feature'`
 4. Push to the branch: `git push origin feature/amazing-feature`
 5. Open a Pull Request
+
+## License
+
+[Apache 2.0](LICENSE)
