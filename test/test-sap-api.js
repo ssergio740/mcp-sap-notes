@@ -87,7 +87,7 @@ try {
   console.log('\n💡 Next steps:');
   console.log('   1. The new SAP Notes API is working');
   console.log('   2. Try it in Cursor - the MCP server should now work');
-  console.log('   3. Use sap_note_search and sap_note_get tools');
+  console.log('   3. Use search and fetch tools');
 
 } catch (error) {
   console.error('\n❌ SAP Notes API test failed:', error.message);

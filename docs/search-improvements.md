@@ -59,9 +59,9 @@ private async getCoveoToken(sapToken: string): Promise<string> {
 **Improvement**: Share browser sessions between the search Playwright fallback and note retrieval. Use a single browser pool.
 
 ### 5. Parallel Note Retrieval
-**Problem**: When the LLM calls `sap_note_get` for multiple notes, they run sequentially.
+**Problem**: When the LLM calls `fetch` for multiple notes, they run sequentially.
 
-**Improvement**: The MCP protocol handles this at the client level, but the tool descriptions could suggest batching. A `sap_notes_get_batch` tool accepting multiple IDs could reduce round-trips.
+**Improvement**: The MCP protocol handles this at the client level, but the tool descriptions could suggest batching. A `fetch_batch` tool accepting multiple IDs could reduce round-trips.
 
 ### 6. Search Suggestions
 **Problem**: When search returns 0 results, the user gets a generic error. There's no guidance on how to refine the query.
@@ -70,7 +70,7 @@ private async getCoveoToken(sapToken: string): Promise<string> {
 - Suggest alternative query formulations
 - Try simplified query (remove stop words)
 - Check if the query might be a note ID or transaction code
-- Suggest using `sap_note_get` directly if it looks like an ID
+- Suggest using `fetch` directly if it looks like an ID
 
 ### 7. Structured Content Sections
 **Problem**: The `content` field in note details is a single HTML string. The LLM needs to parse sections manually.

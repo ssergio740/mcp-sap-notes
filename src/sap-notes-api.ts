@@ -252,7 +252,7 @@ export class SapNotesApiClient {
         }
         
         // Fallback 3: Return helpful error message with guidance
-        const helpfulMessage = `Search temporarily unavailable: Coveo search engine failed (${errorMessage}) and fallback search methods found no results.\n\n🔧 WORKAROUNDS:\n1. If you have a specific SAP Note ID (e.g., 2744792), use sap_note_get(id="2744792") - this works perfectly!\n2. Try searching directly on https://me.sap.com/notes\n3. Search may work better outside containerized environments\n\nNote: Individual note retrieval (sap_note_get) is fully functional and can access complete SAP Note content.`;
+        const helpfulMessage = `Search temporarily unavailable: Coveo search engine failed (${errorMessage}) and fallback search methods found no results.\n\n🔧 WORKAROUNDS:\n1. If you have a specific SAP Note ID (e.g., 2744792), use fetch(id="2744792") — this works perfectly!\n2. Try searching directly on https://me.sap.com/notes\n3. Search may work better outside containerized environments\n\nNote: Individual note retrieval via fetch() is fully functional and can access complete SAP Note content.`;
         
         logger.error(`❌ All search methods exhausted: ${helpfulMessage}`);
         throw new Error(helpfulMessage);

@@ -117,7 +117,7 @@ ACCESS_TOKEN=your-secret-token
 
 Once connected, the MCP server exposes two tools:
 
-### `sap_note_search`
+### `search`
 Search for SAP Notes by keyword, error code, or note ID.
 
 ```
@@ -125,7 +125,7 @@ Input: { q: "OData error 415", lang: "EN" }
 Output: List of matching SAP Notes with metadata
 ```
 
-### `sap_note_get`
+### `fetch`
 Fetch the full content of a specific SAP Note.
 
 ```

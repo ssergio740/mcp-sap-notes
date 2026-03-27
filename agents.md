@@ -23,8 +23,8 @@ An MCP (Model Context Protocol) server that gives AI assistants (Cursor, Claude,
                        ▼
          ┌──────────────────────────┐
          │  MCP Tool Handlers       │
-         │  sap_note_search         │
-         │  sap_note_get            │
+         │  search         │
+         │  fetch            │
          └────────────┬─────────────┘
                       │
         ┌─────────────┴──────────────┐
@@ -103,12 +103,12 @@ The server supports two authentication methods:
 
 ## MCP Tools
 
-### `sap_note_search`
+### `search`
 - **Input:** `{ q: string, lang?: 'EN' | 'DE' }`
 - **Flow:** Coveo search API → fallback to direct ID lookup → fallback to SAP internal search
 - **Output:** Ranked list of matching SAP Notes with metadata
 
-### `sap_note_get`
+### `fetch`
 - **Input:** `{ id: string, lang?: 'EN' | 'DE' }`
 - **Flow:** Playwright raw notes API → fallback to HTTP raw notes API
 - **Output:** Full note content (HTML), metadata, priority, category

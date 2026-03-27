@@ -1,4 +1,4 @@
-# Debug Output Reference for sap_note_search
+# Debug Output Reference for search
 
 ## Quick Reference
 
@@ -180,7 +180,7 @@ The tool returns a JSON-RPC response with this structure:
    }
    ```
 
-3. **Note Details (for sap_note_get):**
+3. **Note Details (for fetch):**
    ```
    GET https://me.sap.com/backend/raw/sapnotes/Detail?q={noteId}&t=E&isVTEnabled=false
    ```
@@ -214,7 +214,7 @@ curl -X POST http://localhost:3123/mcp \
     "id":2,
     "method":"tools/call",
     "params":{
-      "name":"sap_note_search",
+      "name":"search",
       "arguments":{"q":"2744792"}
     }
   }'

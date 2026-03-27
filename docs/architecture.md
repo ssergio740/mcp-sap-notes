@@ -22,8 +22,8 @@ The SAP Note Search MCP Server is a Model Context Protocol server that enables A
                   ▼
        ┌────────────────────┐
        │   MCP Tool Layer    │
-       │ sap_note_search     │
-       │ sap_note_get        │
+       │ search     │
+       │ fetch        │
        └─────────┬──────────┘
                  │
     ┌────────────┼────────────┐

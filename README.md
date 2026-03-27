@@ -233,7 +233,7 @@ docker run -it \
 | `MAX_JWT_AGE_H` | No | `12` | Token cache lifetime in hours |
 | `HEADFUL` | No | `false` | Show browser window (for debugging / 2FA) |
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
-| `HTTP_PORT` | No | `3002` | Port for HTTP MCP transport |
+| `HTTP_PORT` | No | `3123` | Port for HTTP MCP transport |
 | `ACCESS_TOKEN` | No | — | Bearer token for HTTP server auth |
 
 \* At least one auth pair is required: either `SAP_USERNAME` + `SAP_PASSWORD` **or** `PFX_PATH` + `PFX_PASSPHRASE`.

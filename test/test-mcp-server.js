@@ -88,7 +88,7 @@ setTimeout(() => {
     id: 3,
     method: 'tools/call',
     params: {
-      name: 'sap_note_search',
+      name: 'search',
       arguments: {
         q: '2744792'
       }
@@ -103,7 +103,7 @@ setTimeout(() => {
     id: 4,
     method: 'tools/call',
     params: {
-      name: 'sap_note_get',
+      name: 'fetch',
       arguments: {
         id: '2744792'
       }

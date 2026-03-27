@@ -185,7 +185,7 @@ async function testAuthentication() {
     console.log('Next steps:');
     console.log('1. Your authentication is working correctly');
     console.log('2. The MCP server should now work in Cursor');
-    console.log('3. Try using the sap_note_search or sap_note_get tools');
+    console.log('3. Try using the search or fetch tools');
     
   } catch (error) {
     console.error('');

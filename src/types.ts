@@ -76,12 +76,12 @@ export interface AuthState {
 // MCP Server capabilities
 export interface MCPCapabilities {
   tools: {
-    sap_note_search: {
+    search: {
       description: string;
       inputSchema: object;
       examples: Array<SapNoteSearchParams>;
     };
-    sap_note_get: {
+    fetch: {
       description: string;
       inputSchema: object;
       examples: Array<SapNoteGetParams>;

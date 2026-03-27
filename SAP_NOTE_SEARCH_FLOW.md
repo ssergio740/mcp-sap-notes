@@ -2,17 +2,17 @@
 
 ## Overview
 
-The `sap_note_search` tool provides semantic search capabilities for SAP Notes and Knowledge Base articles using SAP's **Coveo Search API** - the same search infrastructure that powers SAP's official search interface.
+The `search` tool provides semantic search capabilities for SAP Notes and Knowledge Base articles using SAP's **Coveo Search API** - the same search infrastructure that powers SAP's official search interface.
 
 ## Tool Flow
 
 ### 1. **Entry Point: Tool Call Handler**
 
-When a client calls `sap_note_search` with a query parameter:
+When a client calls `search` with a query parameter:
 
 ```typescript
 {
-  "name": "sap_note_search",
+  "name": "search",
   "arguments": {
     "q": "2744792"  // or any search term
   }
@@ -89,7 +89,7 @@ GET https://me.sap.com/search
 ```
 (Used to extract the Coveo bearer token from the SAP session)
 
-#### **Note Detail URLs (for sap_note_get):**
+#### **Note Detail URLs (for fetch):**
 - **Raw Notes API:** `https://me.sap.com/backend/raw/sapnotes/Detail?q={noteId}&t=E&isVTEnabled=false`
 - **OData API:** `https://launchpad.support.sap.com/services/odata/svt/snogwscorr/KnowledgeBaseEntries?$filter=SapNote eq '{noteId}'&$format=json`
 
@@ -210,7 +210,7 @@ curl -X POST http://localhost:3123/mcp \
     "id": 1,
     "method": "tools/call",
     "params": {
-      "name": "sap_note_search",
+      "name": "search",
       "arguments": {
         "q": "2744792"
       }
@@ -240,7 +240,7 @@ Before any search can execute, the tool:
 ## Summary
 
 **Flow:**
-1. Client → `sap_note_search` tool call
+1. Client → `search` tool call
 2. Handler → Validates & calls `searchNotes()`
 3. Token → Extract Coveo bearer token from SAP session
 4. Search → POST to Coveo API with search query and filters
@@ -251,7 +251,7 @@ Before any search can execute, the tool:
 **Key URLs:**
 - **Token:** `https://me.sap.com/search` (extract Coveo token)
 - **Search:** `https://sapamericaproductiontyfzmfz0.org.coveo.com/rest/search/v2?organizationId=sapamericaproductiontyfzmfz0`
-- **Note Details:** `https://me.sap.com/backend/raw/sapnotes/Detail?q={id}` (for sap_note_get)
+- **Note Details:** `https://me.sap.com/backend/raw/sapnotes/Detail?q={id}` (for fetch)
 
 **Why Coveo?**
 - SAP's official search infrastructure

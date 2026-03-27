@@ -50,7 +50,7 @@ This MCP server provides direct access to SAP Notes and Knowledge Base articles 
 
 ### Available Tools
 
-#### `sap_note_search`
+#### `search`
 Search SAP Notes and KB articles by note ID or keywords.
 
 **Enhanced Description:** This tool includes comprehensive documentation (3,228 characters) with:
@@ -87,7 +87,7 @@ Search SAP Notes and KB articles by note ID or keywords.
 - `{ "q": "error 415 CAP action" }` - Search with specific error code
 - `{ "q": "MM02 material master dump" }` - Transaction + module + issue
 
-#### `sap_note_get`
+#### `fetch`
 Retrieve full content and metadata for a specific SAP Note.
 
 **Enhanced Description:** This tool includes comprehensive documentation (2,911 characters) with:
@@ -140,7 +140,7 @@ Retrieve full content and metadata for a specific SAP Note.
 | Aspect | Details |
 |--------|---------|
 | **Protocol** | JSON-RPC 2.0 over stdin/stdout or HTTP |
-| **Tools** | `sap_note_search`, `sap_note_get` (with enhanced descriptions) |
+| **Tools** | `search`, `fetch` (with enhanced descriptions) |
 | **Tool Descriptions** | 3000+ chars with structured guidance, examples, and validation |
 | **Schema Validation** | Zod schemas with comprehensive constraints |
 | **Auth Flow** | SAP Passport → Browser Automation → Cookie Extraction |
@@ -152,9 +152,9 @@ Retrieve full content and metadata for a specific SAP Note.
 
 | Task | Tool | Parameters |
 |------|------|------------|
-| Find note by ID | `sap_note_search` | `{ "q": "2744792" }` |
-| Search by keywords | `sap_note_search` | `{ "q": "OData gateway error" }` |
-| Get full note content | `sap_note_get` | `{ "id": "2744792" }` |
+| Find note by ID | `search` | `{ "q": "2744792" }` |
+| Search by keywords | `search` | `{ "q": "OData gateway error" }` |
+| Get full note content | `fetch` | `{ "id": "2744792" }` |
 
 ---
 
