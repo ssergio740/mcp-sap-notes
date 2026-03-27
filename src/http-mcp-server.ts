@@ -29,13 +29,13 @@ config({ path: join(__dirname, '..', '.env') });
 
 /**
  * SAP Note MCP HTTP Server using the MCP SDK
- * This implementation uses enhanced tool descriptions for improved LLM accuracy
+ * Uses StreamableHTTPServerTransport in stateless mode.
+ * A fresh McpServer is created per request to avoid connect() collisions.
  */
 class HttpSapNoteMcpServer {
   private config: ServerConfig;
   private authenticator: SapAuthenticator;
   private sapNotesClient: SapNotesApiClient;
-  private mcpServer: McpServer;
   private app: express.Application;
   private server: any;
 
@@ -43,24 +43,16 @@ class HttpSapNoteMcpServer {
     this.config = this.loadConfig();
     this.authenticator = new SapAuthenticator(this.config);
     this.sapNotesClient = new SapNotesApiClient(this.config);
-    
-    // Create MCP server with SDK
-    this.mcpServer = new McpServer({
-      name: 'sap-note-search-mcp',
-      version: '0.3.0'
-    });
 
     this.app = express();
     this.setupMiddleware();
     this.setupRoutes();
-    this.setupTools();
   }
 
   /**
    * Load configuration from environment variables
    */
   private loadConfig(): ServerConfig {
-    // Determine auth method
     const authMethod = (process.env.AUTH_METHOD || 'auto') as 'certificate' | 'password' | 'auto';
     const sapUsername = process.env.SAP_USERNAME;
     const sapPassword = process.env.SAP_PASSWORD;
@@ -123,19 +115,16 @@ class HttpSapNoteMcpServer {
    * Setup Express middleware
    */
   private setupMiddleware(): void {
-    // Enable CORS for all routes
     this.app.use(cors({
-      origin: '*', // Allow all origins for development
+      origin: '*',
       methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization', 'mcp-session-id'],
       exposedHeaders: ['Mcp-Session-Id'],
       credentials: false
     }));
 
-    // Parse JSON bodies
     this.app.use(express.json());
 
-    // Logging middleware
     this.app.use((req, res, next) => {
       logger.info(`${req.method} ${req.path}`);
       next();
@@ -147,127 +136,46 @@ class HttpSapNoteMcpServer {
    */
   private authMiddleware = (req: express.Request, res: express.Response, next: Function): void => {
     const accessToken = process.env.ACCESS_TOKEN;
-    
-    // If no token is configured or it's empty, allow all requests
+
     if (!accessToken || accessToken.trim() === '') {
-      logger.debug('🔓 No ACCESS_TOKEN configured - allowing request without authentication');
+      logger.debug('No ACCESS_TOKEN configured - allowing request without authentication');
       return next();
     }
 
-    // Try multiple header sources (supports Microsoft Power Platform proxy and standard clients)
     const authHeader = req.headers.authorization;
     const bearerHeader = req.headers.bearer as string | undefined;
-    
+
     let token: string | undefined;
-    
-    // Option 1: Check custom 'bearer' header (Microsoft Power Platform style)
+
     if (bearerHeader) {
       token = bearerHeader;
-      logger.info(`🔑 Token found in 'bearer' header (Power Platform style)`);
-    }
-    // Option 2: Standard 'Authorization: Bearer <token>' header
-    else if (authHeader) {
+    } else if (authHeader) {
       const parts = authHeader.split(' ');
       if (parts.length === 2 && parts[0] === 'Bearer') {
         token = parts[1];
-        logger.info(`🔑 Token found in 'Authorization' header (standard format)`);
-      } else {
-        logger.warn(`⚠️  Authorization header present but invalid format: "${authHeader}"`);
       }
     }
-    
-    // No valid token found
+
     if (!token) {
-      logger.warn('❌ Authentication failed: No valid token in headers');
-      logger.info(`🔍 Headers checked: authorization="${authHeader}", bearer="${bearerHeader}"`);
       res.status(401).json({
         jsonrpc: '2.0',
         id: req.body?.id || null,
-        error: {
-          code: -32001,
-          message: 'Unauthorized: Missing or invalid authorization',
-          data: 'Provide token in "Authorization: Bearer <token>" header or "bearer" header'
-        }
+        error: { code: -32001, message: 'Unauthorized: Missing or invalid authorization' }
       });
       return;
     }
 
-    // Validate the token
     if (token !== accessToken) {
-      logger.warn(`❌ Authentication failed: Invalid token (length: ${token.length})`);
       res.status(401).json({
         jsonrpc: '2.0',
         id: req.body?.id || null,
-        error: {
-          code: -32001,
-          message: 'Unauthorized: Invalid access token'
-        }
+        error: { code: -32001, message: 'Unauthorized: Invalid access token' }
       });
       return;
     }
 
-    // Token is valid, proceed
-    logger.info('✅ Authentication successful');
     next();
   };
-
-  /**
-   * Setup Express routes
-   */
-  private setupRoutes(): void {
-    // Health check endpoint
-    this.app.get('/health', (req: express.Request, res: express.Response) => {
-      res.json({ 
-        status: 'healthy',
-        server: 'sap-note-search-mcp',
-        version: '0.3.0',
-        sdk: 'mcp-sdk-v1.28.0',
-        protocol: 'streamable-http',
-        features: ['enhanced-tool-descriptions']
-      });
-    });
-
-    // MCP endpoint handler for both GET and POST requests
-    const mcpHandler = async (req: express.Request, res: express.Response) => {
-      try {
-        // Create a new transport for each request to prevent request ID collisions
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: undefined,
-          enableJsonResponse: false  // Enable SSE streams for LibreChat compatibility
-        });
-
-        res.on('close', () => {
-          transport.close();
-        });
-
-        await this.mcpServer.connect(transport);
-        // The transport's handleRequest method will determine whether to handle GET (SSE) or POST (JSON-RPC)
-        await transport.handleRequest(req, res, req.body);
-      } catch (error) {
-        logger.error('Error handling MCP request:', error);
-        if (!res.headersSent) {
-          res.status(500).json({
-            jsonrpc: '2.0',
-            error: {
-              code: -32603,
-              message: 'Internal server error'
-            },
-            id: null
-          });
-        }
-      }
-    };
-
-    // Handle GET (SSE streams), POST (JSON-RPC messages), and DELETE (session termination) requests to /mcp
-    this.app.get('/mcp', this.authMiddleware, mcpHandler);
-    this.app.post('/mcp', this.authMiddleware, mcpHandler);
-    this.app.delete('/mcp', this.authMiddleware, mcpHandler);
-
-    // Handle preflight OPTIONS requests
-    this.app.options('/mcp', (req: express.Request, res: express.Response) => {
-      res.status(200).end();
-    });
-  }
 
   /**
    * Execute an API call with automatic auth retry on session expiry.
@@ -289,12 +197,18 @@ class HttpSapNoteMcpServer {
   }
 
   /**
-   * Setup MCP tools using the MCP SDK
+   * Create a fresh McpServer instance with all tools registered.
+   * Called per-request in stateless mode so connect() is always on a new server.
    */
-  private setupTools(): void {
-    // SAP Note Search Tool
-    this.mcpServer.registerTool(
-      'sap_note_search',
+  private createMcpServer(): McpServer {
+    const mcp = new McpServer({
+      name: 'sap-note-search-mcp',
+      version: '0.3.0'
+    });
+
+    // ─── search ──────────────────────────────────────────────────
+    mcp.registerTool(
+      'search',
       {
         title: 'Search SAP Notes',
         description: SAP_NOTE_SEARCH_DESCRIPTION,
@@ -302,14 +216,13 @@ class HttpSapNoteMcpServer {
         outputSchema: NoteSearchOutputSchema
       },
       async ({ q, lang = 'EN' }) => {
-        logger.info(`🔎 [sap_note_search] Starting search for query: "${q}"`);
-        
+        logger.info(`🔎 [search] Starting search for query: "${q}"`);
+
         try {
           const searchResponse = await this.withAuthRetry(token =>
             this.sapNotesClient.searchNotes(q, token, 10)
           );
 
-          // Format results
           const output = {
             totalResults: searchResponse.totalResults,
             query: searchResponse.query,
@@ -324,9 +237,8 @@ class HttpSapNoteMcpServer {
             }))
           };
 
-          // Format display text
           let resultText = `Found ${output.totalResults} SAP Note(s) for query: "${output.query}"\n\n`;
-          
+
           for (const note of output.results) {
             resultText += `**SAP Note ${note.id}**\n`;
             resultText += `Title: ${note.title}\n`;
@@ -337,40 +249,35 @@ class HttpSapNoteMcpServer {
             resultText += `URL: ${note.url}\n\n`;
           }
 
-          logger.info(`✅ [sap_note_search] Successfully completed search, returning ${output.totalResults} results`);
+          logger.info(`✅ [search] Returning ${output.totalResults} results`);
 
           return {
             content: [{ type: 'text', text: resultText }],
             structuredContent: output
           };
-
         } catch (error) {
           logger.error('❌ Search failed:', error);
           const errorMessage = error instanceof Error ? error.message : 'Unknown search error';
-          
           return {
-            content: [{ 
-              type: 'text', 
-              text: `Search failed: ${errorMessage}` 
-            }],
+            content: [{ type: 'text', text: `Search failed: ${errorMessage}` }],
             isError: true
           };
         }
       }
     );
 
-    // SAP Note Get Tool
-    this.mcpServer.registerTool(
-      'sap_note_get',
+    // ─── fetch ───────────────────────────────────────────────────
+    mcp.registerTool(
+      'fetch',
       {
-        title: 'Get SAP Note Details',
+        title: 'Fetch SAP Note',
         description: SAP_NOTE_GET_DESCRIPTION,
         inputSchema: NoteGetInputSchema,
         outputSchema: NoteGetOutputSchema
       },
-      async ({ id, lang = 'EN' }) => {
-        logger.info(`📄 [sap_note_get] Getting note details for ID: ${id}`);
-        
+      async ({ id, lang = 'EN', includeCorrections = false }) => {
+        logger.info(`📄 [fetch] Getting note ${id} (includeCorrections=${includeCorrections})`);
+
         try {
           const noteDetail = await this.withAuthRetry(token =>
             this.sapNotesClient.getNote(id, token)
@@ -378,58 +285,159 @@ class HttpSapNoteMcpServer {
 
           if (!noteDetail) {
             return {
-              content: [{ 
-                type: 'text', 
-                text: `SAP Note ${id} not found or not accessible.` 
-              }],
+              content: [{ type: 'text', text: `SAP Note ${id} not found or not accessible.` }],
               isError: true
             };
           }
 
-          // Parse HTML content into clean text with sections
+          // Optionally fetch correction instruction details via OData
+          if (includeCorrections && noteDetail.correctionsSummary && noteDetail.correctionsSummary.length > 0) {
+            try {
+              const corrections = await this.withAuthRetry(token =>
+                this.sapNotesClient.getCorrectionDetails(id, noteDetail.correctionsSummary!, token)
+              );
+              if (corrections && corrections.length > 0) {
+                (noteDetail as any).correctionDetails = corrections;
+              }
+            } catch (corrError) {
+              logger.warn(`⚠️ Correction details fetch failed (non-fatal): ${corrError instanceof Error ? corrError.message : String(corrError)}`);
+            }
+          }
+
           const parsed = parseNoteContent(noteDetail.content);
 
-          const output = {
+          const output: Record<string, any> = {
             id: noteDetail.id,
             title: noteDetail.title,
             summary: noteDetail.summary,
             component: noteDetail.component || null,
+            componentText: noteDetail.componentText || null,
             priority: noteDetail.priority || null,
             category: noteDetail.category || null,
+            version: noteDetail.version || null,
+            status: noteDetail.status || null,
             releaseDate: noteDetail.releaseDate,
             language: noteDetail.language,
             url: noteDetail.url,
             content: parsed.plainText || noteDetail.content
           };
 
+          // Add enriched metadata only when present
+          if (noteDetail.validity?.length) output.validity = noteDetail.validity;
+          if (noteDetail.supportPackages?.length) output.supportPackages = noteDetail.supportPackages;
+          if (noteDetail.supportPackagePatches?.length) output.supportPackagePatches = noteDetail.supportPackagePatches;
+          if (noteDetail.references) output.references = noteDetail.references;
+          if (noteDetail.prerequisites?.length) output.prerequisites = noteDetail.prerequisites;
+          if (noteDetail.sideEffects) output.sideEffects = noteDetail.sideEffects;
+          if (noteDetail.correctionsInfo) output.correctionsInfo = noteDetail.correctionsInfo;
+          if (noteDetail.correctionsSummary?.length) output.correctionsSummary = noteDetail.correctionsSummary;
+          if ((noteDetail as any).correctionDetails?.length) output.correctionDetails = (noteDetail as any).correctionDetails;
+          if (noteDetail.manualActions) output.manualActions = noteDetail.manualActions;
+          if (noteDetail.attachments?.length) output.attachments = noteDetail.attachments;
+          if (noteDetail.downloadUrl) output.downloadUrl = noteDetail.downloadUrl;
+
+          // Format display text
           let resultText = `**SAP Note ${output.id} - ${output.title}**\n\n`;
-          resultText += `Component: ${output.component || 'Not specified'} | `;
+          resultText += `Component: ${output.componentText || output.component || 'Not specified'} | `;
           resultText += `Priority: ${output.priority || 'Not specified'} | `;
-          resultText += `Released: ${output.releaseDate}\n`;
-          resultText += `URL: ${output.url}\n\n`;
+          resultText += `Category: ${output.category || 'Not specified'} | `;
+          resultText += `Released: ${output.releaseDate}`;
+          if (output.version) resultText += ` | Version: ${output.version}`;
+          resultText += `\nURL: ${output.url}\n\n`;
           resultText += output.content + '\n';
 
-          logger.info(`✅ [sap_note_get] Successfully retrieved note ${id}`);
+          if (output.validity?.length) {
+            resultText += `\n**Validity:** ${output.validity.map((v: any) => `${v.softwareComponent} ${v.versionFrom}-${v.versionTo}`).join(', ')}\n`;
+          }
+          if (output.correctionsInfo) {
+            const ci = output.correctionsInfo;
+            resultText += `\n**Corrections:** ${ci.totalCorrections ?? '?'} corrections, ${ci.totalManualActivities ?? 0} manual activities, ${ci.totalPrerequisites ?? 0} prerequisites\n`;
+          }
+          if (output.prerequisites?.length) {
+            resultText += `\n**Prerequisites:** ${output.prerequisites.map((p: any) => `Note ${p.noteNumber}`).join(', ')}\n`;
+          }
+          if (output.correctionDetails?.length) {
+            resultText += `\n**Correction Details (${output.correctionDetails.length} entries):**\n`;
+            for (const cd of output.correctionDetails) {
+              resultText += `  • ${cd.softwareComponent} ${cd.versionFrom}-${cd.versionTo}`;
+              if (cd.objects?.length) {
+                resultText += ` — ${cd.objects.length} objects (${cd.objects.slice(0, 3).map((o: any) => `${o.objectType} ${o.objectName}`).join(', ')}${cd.objects.length > 3 ? '...' : ''})`;
+              }
+              resultText += '\n';
+            }
+          }
+
+          logger.info(`✅ [fetch] Successfully retrieved note ${id}`);
 
           return {
             content: [{ type: 'text', text: resultText }],
             structuredContent: output
           };
-
         } catch (error) {
           logger.error(`❌ Note retrieval failed for ${id}:`, error);
           const errorMessage = error instanceof Error ? error.message : 'Unknown retrieval error';
-          
           return {
-            content: [{ 
-              type: 'text', 
-              text: `Failed to retrieve SAP Note ${id}: ${errorMessage}` 
-            }],
+            content: [{ type: 'text', text: `Failed to retrieve SAP Note ${id}: ${errorMessage}` }],
             isError: true
           };
         }
       }
     );
+
+    return mcp;
+  }
+
+  /**
+   * Setup Express routes
+   */
+  private setupRoutes(): void {
+    // Health check
+    this.app.get('/health', (_req: express.Request, res: express.Response) => {
+      res.json({
+        status: 'healthy',
+        server: 'sap-note-search-mcp',
+        version: '0.3.0',
+        protocol: 'streamable-http',
+        tools: ['search', 'fetch']
+      });
+    });
+
+    // MCP endpoint — stateless: new McpServer + transport per request
+    const mcpHandler = async (req: express.Request, res: express.Response) => {
+      try {
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined, // stateless
+          enableJsonResponse: false
+        });
+
+        const mcp = this.createMcpServer();
+
+        res.on('close', () => {
+          transport.close();
+        });
+
+        await mcp.connect(transport);
+        await transport.handleRequest(req, res, req.body);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error(`Error handling MCP request: ${msg}`);
+        if (!res.headersSent) {
+          res.status(500).json({
+            jsonrpc: '2.0',
+            error: { code: -32603, message: 'Internal server error' },
+            id: null
+          });
+        }
+      }
+    };
+
+    this.app.get('/mcp', this.authMiddleware, mcpHandler);
+    this.app.post('/mcp', this.authMiddleware, mcpHandler);
+    this.app.delete('/mcp', this.authMiddleware, mcpHandler);
+
+    this.app.options('/mcp', (_req: express.Request, res: express.Response) => {
+      res.status(200).end();
+    });
   }
 
   /**
@@ -437,7 +445,7 @@ class HttpSapNoteMcpServer {
    */
   async start(): Promise<void> {
     const port = process.env.HTTP_PORT || 3123;
-    
+
     logger.warn('🚀 Starting HTTP SAP Note MCP Server');
     logger.warn(`📡 Server will be available at: http://localhost:${port}/mcp`);
 
@@ -488,49 +496,24 @@ const isDirectRun = (() => {
   try {
     const thisFile = fileURLToPath(import.meta.url);
     const invoked = process.argv[1] ? process.argv[1] : '';
-    const matches = thisFile === invoked;
-    
-    // Debug output to help troubleshooting
-    if (process.env.DEBUG_START === 'true') {
-      console.error('🔍 Direct run check:');
-      console.error('  thisFile:', thisFile);
-      console.error('  invoked:', invoked);
-      console.error('  matches:', matches);
-    }
-    
-    return matches;
-  } catch (error) {
-    if (process.env.DEBUG_START === 'true') {
-      console.error('❌ Error in isDirectRun check:', error);
-    }
+    return thisFile === invoked;
+  } catch {
     return false;
   }
 })();
 
-// Start server if:
-// 1. File is run directly, OR
-// 2. AUTO_START environment variable is set to 'true'
 const shouldStart = isDirectRun || process.env.AUTO_START === 'true';
-
-if (process.env.DEBUG_START === 'true') {
-  console.error('🚦 Should start server:', shouldStart);
-  console.error('   - isDirectRun:', isDirectRun);
-  console.error('   - AUTO_START:', process.env.AUTO_START);
-}
 
 if (shouldStart) {
   const server = new HttpSapNoteMcpServer();
-  
-  // Handle process termination gracefully
+
   process.on('SIGINT', () => server.shutdown());
   process.on('SIGTERM', () => server.shutdown());
-  
+
   server.start().catch((error) => {
     logger.error('Failed to start HTTP server:', error);
     process.exit(1);
   });
-} else if (process.env.DEBUG_START === 'true') {
-  console.error('⏸️  Server not started (module imported, not run directly)');
 }
 
 export { HttpSapNoteMcpServer };
