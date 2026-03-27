@@ -347,7 +347,8 @@ export class SapNotesApiClient {
 
   /**
    * Fetch detailed correction instructions for a note via the CorrIns OData service.
-   * Returns an array of correction entries with affected objects and prerequisites.
+   * Uses the snogwscorrins OData V2 service on me.sap.com.
+   * Returns an array of correction entries with affected ABAP objects and prerequisites.
    * This is an optional enrichment — failures are non-fatal.
    */
   async getCorrectionDetails(
@@ -355,8 +356,134 @@ export class SapNotesApiClient {
     correctionsSummary: SapNoteCorrectionSummary[],
     token: string
   ): Promise<any[]> {
-    // Stub — will be implemented in Phase 2
-    logger.debug(`getCorrectionDetails called for note ${noteId} — not yet implemented`);
+    logger.info(`🔧 Fetching correction details for note ${noteId} (${correctionsSummary.length} components)`);
+
+    const allCorrections: any[] = [];
+    const paddedNoteId = noteId.padStart(10, '0');
+
+    for (const summary of correctionsSummary) {
+      const pakId = summary.pakId;
+      if (!pakId) {
+        logger.debug(`Skipping correction for ${summary.softwareComponent} — no pakId`);
+        continue;
+      }
+
+      try {
+        // Fetch correction instructions list for this software component
+        const corrInsEntries = await this.fetchCorrInsSet(paddedNoteId, pakId, token);
+        if (!corrInsEntries || corrInsEntries.length === 0) {
+          logger.debug(`No correction entries found for PakId=${pakId}`);
+          continue;
+        }
+
+        // For each correction instruction, fetch TADIR (objects) and Prerequisites
+        for (const entry of corrInsEntries) {
+          const correction: any = {
+            softwareComponent: entry.Name || summary.softwareComponent,
+            versionFrom: entry.VerFrom || '',
+            versionTo: entry.VerTo || '',
+            sapNotesNumber: entry.SapNotesNumber || noteId,
+            sapNotesTitle: entry.SapNotesTitle || '',
+          };
+
+          // Fetch TADIR (affected objects) — optional, may fail
+          try {
+            const tadirEntries = await this.fetchCorrInsNavigation(entry, 'TADIR', token);
+            if (tadirEntries && tadirEntries.length > 0) {
+              correction.objects = tadirEntries.map((t: any) => ({
+                objectName: t.ObjName || '',
+                objectType: t.ObjType || '',
+              })).filter((o: any) => o.objectName);
+            }
+          } catch (tadirErr) {
+            logger.debug(`TADIR fetch failed for correction ${entry.Aleid}: ${tadirErr}`);
+          }
+
+          // Fetch Prerequisites — optional, may fail
+          try {
+            const preEntries = await this.fetchCorrInsNavigation(entry, 'Prerequisite', token);
+            if (preEntries && preEntries.length > 0) {
+              correction.prerequisites = preEntries.map((p: any) => ({
+                noteNumber: p.SapNotesNumber || '',
+                title: p.Title || '',
+              })).filter((p: any) => p.noteNumber);
+            }
+          } catch (preErr) {
+            logger.debug(`Prerequisite fetch failed for correction ${entry.Aleid}: ${preErr}`);
+          }
+
+          allCorrections.push(correction);
+        }
+      } catch (compError) {
+        logger.warn(`⚠️ Correction fetch failed for PakId=${pakId} (non-fatal): ${compError instanceof Error ? compError.message : String(compError)}`);
+      }
+    }
+
+    logger.info(`🔧 Fetched ${allCorrections.length} correction entries for note ${noteId}`);
+    return allCorrections;
+  }
+
+  /**
+   * Fetch CorrInsSet entries for a note + software component from the OData service.
+   */
+  private async fetchCorrInsSet(paddedNoteId: string, pakId: string, token: string): Promise<any[]> {
+    const odataUrl = `https://me.sap.com/backend/raw/core/W7LegacyProxyVerticle/odata/svt/snogwscorrins/CorrInsSet?$filter=SapNotesNumber eq '${paddedNoteId}' and PakId eq '${pakId}'&$format=json`;
+
+    const cookies = await this.formatCookiesForAPI(token);
+    const response = await fetch(odataUrl, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'Cookie': cookies,
+        'Referer': 'https://me.sap.com/',
+        'Origin': 'https://me.sap.com',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`CorrInsSet HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const json = await response.json();
+    return json?.d?.results || [];
+  }
+
+  /**
+   * Fetch a navigation property (TADIR or Prerequisite) for a specific CorrIns entry.
+   */
+  private async fetchCorrInsNavigation(entry: any, navProperty: string, token: string): Promise<any[]> {
+    // Build the entity key from the CorrIns entry
+    const keyParts = [
+      `Aleid='${entry.Aleid}'`,
+      `PakId='${entry.PakId}'`,
+      `Insta='${entry.Insta}'`,
+      `Vernr='${entry.Vernr}'`,
+      `Name='${entry.Name}'`,
+      `VerFrom='${entry.VerFrom}'`,
+      `VerTo='${entry.VerTo}'`,
+    ].join(',');
+
+    const odataUrl = `https://me.sap.com/backend/raw/core/W7LegacyProxyVerticle/odata/svt/snogwscorrins/CorrInsSet(${keyParts})/${navProperty}?$format=json`;
+
+    const cookies = await this.formatCookiesForAPI(token);
+    const response = await fetch(odataUrl, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'Cookie': cookies,
+        'Referer': 'https://me.sap.com/',
+        'Origin': 'https://me.sap.com',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`${navProperty} HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const json = await response.json();
+    // Navigation property might return results array or a single entity
+    if (json?.d?.results) return json.d.results;
+    if (json?.d) return [json.d];
     return [];
   }
 
