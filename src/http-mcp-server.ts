@@ -18,6 +18,7 @@ import {
   SAP_NOTE_SEARCH_DESCRIPTION,
   SAP_NOTE_GET_DESCRIPTION
 } from './schemas/sap-notes.js';
+import { parseNoteContent } from './html-utils.js';
 
 // Get the directory of this module for resolving paths
 const __filename = fileURLToPath(import.meta.url);
@@ -269,6 +270,25 @@ class HttpSapNoteMcpServer {
   }
 
   /**
+   * Execute an API call with automatic auth retry on session expiry.
+   */
+  private async withAuthRetry<T>(fn: (token: string) => Promise<T>): Promise<T> {
+    const token = await this.authenticator.ensureAuthenticated();
+    try {
+      return await fn(token);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes('SESSION_EXPIRED') || msg.includes('401') || msg.includes('Unauthorized') || msg.includes('session expired')) {
+        logger.warn('Session expired, re-authenticating and retrying...');
+        this.authenticator.invalidateAuth();
+        const newToken = await this.authenticator.ensureAuthenticated();
+        return await fn(newToken);
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Setup MCP tools using the MCP SDK
    */
   private setupTools(): void {
@@ -285,13 +305,9 @@ class HttpSapNoteMcpServer {
         logger.info(`🔎 [sap_note_search] Starting search for query: "${q}"`);
         
         try {
-          // Ensure authentication
-          logger.warn('🔐 Starting authentication for search...');
-          const token = await this.authenticator.ensureAuthenticated();
-          logger.warn('✅ Authentication successful for search');
-
-          // Execute search
-          const searchResponse = await this.sapNotesClient.searchNotes(q, token, 10);
+          const searchResponse = await this.withAuthRetry(token =>
+            this.sapNotesClient.searchNotes(q, token, 10)
+          );
 
           // Format results
           const output = {
@@ -356,13 +372,9 @@ class HttpSapNoteMcpServer {
         logger.info(`📄 [sap_note_get] Getting note details for ID: ${id}`);
         
         try {
-          // Ensure authentication
-          logger.warn('🔐 Starting authentication for note retrieval...');
-          const token = await this.authenticator.ensureAuthenticated();
-          logger.warn('✅ Authentication successful for note retrieval');
-
-          // Get note details
-          const noteDetail = await this.sapNotesClient.getNote(id, token);
+          const noteDetail = await this.withAuthRetry(token =>
+            this.sapNotesClient.getNote(id, token)
+          );
 
           if (!noteDetail) {
             return {
@@ -374,7 +386,9 @@ class HttpSapNoteMcpServer {
             };
           }
 
-          // Structure the output
+          // Parse HTML content into clean text with sections
+          const parsed = parseNoteContent(noteDetail.content);
+
           const output = {
             id: noteDetail.id,
             title: noteDetail.title,
@@ -385,20 +399,15 @@ class HttpSapNoteMcpServer {
             releaseDate: noteDetail.releaseDate,
             language: noteDetail.language,
             url: noteDetail.url,
-            content: noteDetail.content
+            content: parsed.plainText || noteDetail.content
           };
 
-          // Format display text
-          let resultText = `**SAP Note ${output.id} - Detailed Information**\n\n`;
-          resultText += `**Title:** ${output.title}\n`;
-          resultText += `**Summary:** ${output.summary}\n`;
-          resultText += `**Component:** ${output.component || 'Not specified'}\n`;
-          resultText += `**Priority:** ${output.priority || 'Not specified'}\n`;
-          resultText += `**Category:** ${output.category || 'Not specified'}\n`;
-          resultText += `**Release Date:** ${output.releaseDate}\n`;
-          resultText += `**Language:** ${output.language}\n`;
-          resultText += `**URL:** ${output.url}\n\n`;
-          resultText += `**Content:**\n${output.content}\n\n`;
+          let resultText = `**SAP Note ${output.id} - ${output.title}**\n\n`;
+          resultText += `Component: ${output.component || 'Not specified'} | `;
+          resultText += `Priority: ${output.priority || 'Not specified'} | `;
+          resultText += `Released: ${output.releaseDate}\n`;
+          resultText += `URL: ${output.url}\n\n`;
+          resultText += output.content + '\n';
 
           logger.info(`✅ [sap_note_get] Successfully retrieved note ${id}`);
 
