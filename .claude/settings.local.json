@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(docker exec *)",
-      "Bash(docker compose *)"
+      "Bash(docker compose *)",
+      "Bash(grep -E \"\\\\.\\(yml|yaml|json|txt|md\\)$\")"
     ]
   }
 }

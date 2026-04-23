@@ -15,6 +15,18 @@ from .config import ServerConfig
 logger = logging.getLogger(__name__)
 
 
+def _val(obj: object, key: str, default: str = "") -> str:
+    """Extract a SAP OData value that may be {'value': '...'} or a plain string."""
+    raw = obj.get(key) if isinstance(obj, dict) else None  # type: ignore[union-attr]
+    if raw is None:
+        return default
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, dict):
+        return raw.get("value") or default
+    return str(raw) or default
+
+
 class SapNotesApiClient:
     def __init__(self, config: ServerConfig) -> None:
         self._config = config
@@ -384,18 +396,18 @@ class SapNotesApiClient:
     def _map_sapnote_detail(self, sap_note: dict, note_id: str) -> dict:
         header = sap_note.get("Header", {})
         detail = {
-            "id": header.get("Number", {}).get("value") or note_id,
-            "title": sap_note.get("Title", {}).get("value") or f"SAP Note {note_id}",
-            "summary": header.get("Type", {}).get("value") or "SAP Knowledge Base Article",
-            "content": sap_note.get("LongText", {}).get("value") or "No content available",
-            "language": header.get("Language", {}).get("value") or "EN",
-            "releaseDate": header.get("ReleasedOn", {}).get("value") or "Unknown",
-            "component": header.get("SAPComponentKey", {}).get("value"),
-            "componentText": header.get("SAPComponentKeyText", {}).get("value"),
-            "priority": header.get("Priority", {}).get("value"),
-            "category": header.get("Category", {}).get("value"),
-            "version": str(header.get("Version", {}).get("value")) if header.get("Version", {}).get("value") is not None else None,
-            "status": header.get("Status", {}).get("value"),
+            "id": _val(header, "Number") or note_id,
+            "title": _val(sap_note, "Title") or f"SAP Note {note_id}",
+            "summary": _val(header, "Type") or "SAP Knowledge Base Article",
+            "content": _val(sap_note, "LongText") or "No content available",
+            "language": _val(header, "Language") or "EN",
+            "releaseDate": _val(header, "ReleasedOn") or "Unknown",
+            "component": _val(header, "SAPComponentKey") or None,
+            "componentText": _val(header, "SAPComponentKeyText") or None,
+            "priority": _val(header, "Priority") or None,
+            "category": _val(header, "Category") or None,
+            "version": _val(header, "Version") or None,
+            "status": _val(header, "Status") or None,
             "url": f"https://launchpad.support.sap.com/#/notes/{note_id}",
         }
 
@@ -407,51 +419,51 @@ class SapNotesApiClient:
         if validity_items:
             detail["validity"] = [
                 {
-                    "softwareComponent": item.get("Name", {}).get("value") or item.get("SoftwareComponentID", {}).get("value") or "",
-                    "versionFrom": item.get("VersionFrom", {}).get("value") or "",
-                    "versionTo": item.get("VersionTo", {}).get("value") or "",
+                    "softwareComponent": _val(item, "Name") or _val(item, "SoftwareComponentID"),
+                    "versionFrom": _val(item, "VersionFrom"),
+                    "versionTo": _val(item, "VersionTo"),
                 }
                 for item in validity_items
-                if item.get("Name", {}).get("value") or item.get("SoftwareComponentID", {}).get("value")
+                if _val(item, "Name") or _val(item, "SoftwareComponentID")
             ]
 
         corr_items = ((sap_note.get("CorrectionInstructions") or {}).get("Items") or [])
         if corr_items:
             detail["correctionsSummary"] = [
                 {
-                    "softwareComponent": item.get("Name", {}).get("value") or item.get("SoftwareComponentName", {}).get("value") or "",
-                    "pakId": self._extract_pak_id(item.get("URL", {}).get("value") or "") or item.get("PakId", {}).get("value") or "",
-                    "count": int(item.get("Count", {}).get("value")) if item.get("Count", {}).get("value") else None,
+                    "softwareComponent": _val(item, "Name") or _val(item, "SoftwareComponentName"),
+                    "pakId": self._extract_pak_id(_val(item, "URL")) or _val(item, "PakId"),
+                    "count": int(_val(item, "Count")) if _val(item, "Count") else None,
                 }
                 for item in corr_items
-                if item.get("Name", {}).get("value") or item.get("SoftwareComponentName", {}).get("value")
+                if _val(item, "Name") or _val(item, "SoftwareComponentName")
             ]
 
         pre_items = ((sap_note.get("Preconditions") or {}).get("Items") or [])
         if pre_items:
             detail["prerequisites"] = [
                 {
-                    "noteNumber": item.get("SAPNoteNumber", {}).get("value") or item.get("Number", {}).get("value") or "",
-                    "title": item.get("Title", {}).get("value") or "",
+                    "noteNumber": _val(item, "SAPNoteNumber") or _val(item, "Number"),
+                    "title": _val(item, "Title"),
                 }
                 for item in pre_items
-                if item.get("SAPNoteNumber", {}).get("value") or item.get("Number", {}).get("value")
+                if _val(item, "SAPNoteNumber") or _val(item, "Number")
             ]
 
         corr_info = sap_note.get("CorrectionsInfo") or {}
         if corr_info:
             detail["correctionsInfo"] = {
-                "totalCorrections": int(corr_info.get("TotalCorrections", {}).get("value")) if corr_info.get("TotalCorrections", {}).get("value") else None,
-                "totalManualActivities": int(corr_info.get("TotalManualActivities", {}).get("value")) if corr_info.get("TotalManualActivities", {}).get("value") else None,
-                "totalPrerequisites": int(corr_info.get("TotalPrerequisites", {}).get("value")) if corr_info.get("TotalPrerequisites", {}).get("value") else None,
+                "totalCorrections": int(_val(corr_info, "TotalCorrections")) if _val(corr_info, "TotalCorrections") else None,
+                "totalManualActivities": int(_val(corr_info, "TotalManualActivities")) if _val(corr_info, "TotalManualActivities") else None,
+                "totalPrerequisites": int(_val(corr_info, "TotalPrerequisites")) if _val(corr_info, "TotalPrerequisites") else None,
             }
 
         attachments = ((sap_note.get("Attachments") or {}).get("Items") or [])
         if attachments:
             detail["attachments"] = [
                 {
-                    "filename": item.get("Filename", {}).get("value") or item.get("Name", {}).get("value") or "unknown",
-                    "url": item.get("URL", {}).get("value"),
+                    "filename": _val(item, "Filename") or _val(item, "Name") or "unknown",
+                    "url": _val(item, "URL") or None,
                 }
                 for item in attachments
             ]
