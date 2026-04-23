@@ -3,7 +3,14 @@
     "allow": [
       "Bash(docker exec *)",
       "Bash(docker compose *)",
-      "Bash(grep -E \"\\\\.\\(yml|yaml|json|txt|md\\)$\")"
+      "Bash(grep -E \"\\\\.\\(yml|yaml|json|txt|md\\)$\")",
+      "Bash(chmod +x /c/Users/Epi-Use/Documents/MCP/mcp-abap-adt/mcp-sap-notes/mcp-sap-notes/deploy.sh)",
+      "mcp__AWS_API_MCP_Server__call_aws",
+      "Bash(python3 -c \"import secrets; print\\('MCP_SECRET=' + secrets.token_urlsafe\\(30\\)\\); print\\('ORIGIN_VERIFY=' + secrets.token_urlsafe\\(30\\)\\)\")",
+      "Bash(aws ecr *)",
+      "Bash(docker login *)",
+      "Bash(docker build *)",
+      "Bash(docker push *)"
     ]
   }
 }
