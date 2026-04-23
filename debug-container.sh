@@ -102,9 +102,9 @@ echo ""
 echo -e "${BLUE}📥 PLAYWRIGHT BROWSERS${NC}"
 if [ ! -d "$CACHE_DIR" ] || [ $(ls -1 "$CACHE_DIR" 2>/dev/null | wc -l) -eq 0 ]; then
     echo "Installing Playwright browsers..."
-    cd /app/mcp-servers/mcp-sap-notes || exit 1
-    run_cmd "npm run build" "Building SAP Notes server"
-    run_cmd "npx playwright install chromium" "Installing Playwright Chromium"
+    cd /app || exit 1
+    run_cmd "python3 -m pip install --quiet --disable-pip-version-check -e ." "Installing Python FastMCP package"
+    run_cmd "python3 -m playwright install chromium" "Installing Playwright Chromium"
 else
     echo -e "${GREEN}✅ Playwright browsers appear to be installed${NC}"
 fi
@@ -112,12 +112,12 @@ echo ""
 
 # 5. Run comprehensive debug test
 echo -e "${BLUE}🧪 RUNNING COMPREHENSIVE DEBUG TEST${NC}"
-cd /app/mcp-servers/mcp-sap-notes || exit 1
+cd /app || exit 1
 
-if [ -f "test/test-docker-debug.js" ]; then
-    run_cmd "node test/test-docker-debug.js" "Running Docker debug test"
+if [ -f "py_src/mcp_sap_notes/server_http.py" ]; then
+    run_cmd "python3 -c \"import mcp_sap_notes.server_http; print('Python HTTP entrypoint import OK')\"" "Running Python HTTP smoke test"
 else
-    echo -e "${RED}❌ Docker debug test not found${NC}"
+    echo -e "${RED}❌ Python entrypoint not found${NC}"
 fi
 echo ""
 
@@ -134,8 +134,8 @@ if [ -n "$PFX_PATH" ] && [ -f "$PFX_PATH" ]; then
     export HEADFUL=false
     export LOG_LEVEL=debug
     
-    echo "Running authentication test with enhanced debugging..."
-    run_cmd "npm run test:auth" "SAP authentication test"
+    echo "Running authentication smoke test with enhanced debugging..."
+    run_cmd "python3 -c \"import mcp_sap_notes.auth; print('Python auth module import OK')\"" "SAP authentication smoke test"
     
 else
     echo -e "${YELLOW}⚠️  Certificate not configured or not found${NC}"
@@ -186,7 +186,7 @@ fi
 echo ""
 echo -e "${BLUE}🎯 Next steps:${NC}"
 echo "1. Fix any issues identified above"
-echo "2. Run: npm run test:auth"
+echo "2. Run: mcp-sap-notes-http"
 echo "3. If successful, the MCP server should work"
 echo "4. Check server logs: docker logs <container_name>"
 echo ""

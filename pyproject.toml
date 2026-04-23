@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcp-sap-notes-python"
+version = "0.1.0"
+description = "Python FastMCP server for SAP Notes search and fetch"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "orchestraight.co" }]
+keywords = ["sap", "mcp", "fastmcp", "playwright", "oauth", "azure"]
+dependencies = [
+  "fastmcp>=2.0.0",
+  "cryptography>=42.0.0",
+  "python-multipart>=0.0.9",
+  "requests>=2.32.0",
+  "python-dotenv>=1.0.1",
+  "playwright>=1.49.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0"
+]
+
+[project.scripts]
+mcp-sap-notes-stdio = "mcp_sap_notes.server_stdio:main"
+mcp-sap-notes-http = "mcp_sap_notes.server_http:main"
+
+[tool.setuptools]
+package-dir = {"" = "py_src"}
+
+[tool.setuptools.packages.find]
+where = ["py_src"]

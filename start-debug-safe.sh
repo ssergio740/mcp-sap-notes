@@ -10,7 +10,7 @@ echo ""
 
 # Step 1: Nuclear cleanup
 echo "1️⃣ Aggressive cleanup..."
-pkill -9 -f "http-mcp-server.js" 2>/dev/null && echo "   ✓ Killed server processes" || echo "   ✓ No server processes"
+pkill -9 -f "mcp-sap-notes-http|server_http.py" 2>/dev/null && echo "   ✓ Killed server processes" || echo "   ✓ No server processes"
 pm2 stop mcp-sap-notes 2>/dev/null && echo "   ✓ Stopped PM2" || echo "   ✓ No PM2 process"
 
 # Step 2: Wait and verify multiple times
@@ -46,8 +46,8 @@ fi
 echo "   ✅ Port 3123 is FREE and stable"
 
 # Step 4: Pre-build (outside of debug script to avoid timing issues)
-echo "4️⃣ Building project..."
-npm run build --silent
+echo "4️⃣ Installing Python package..."
+python3 -m pip install --quiet --disable-pip-version-check -e .
 
 # Step 5: One more check before starting
 echo "5️⃣ Pre-flight check..."
@@ -61,5 +61,5 @@ fi
 # Step 6: Start server directly (skip npm to avoid spawning issues)
 echo "6️⃣ Starting debug server..."
 echo ""
-LOG_LEVEL=debug HTTP_PORT=3123 AUTO_START=true DEBUG_START=true node dist/http-mcp-server.js
+LOG_LEVEL=debug HTTP_PORT=3123 HTTP_HOST=0.0.0.0 MCP_HTTP_PATH=/mcp mcp-sap-notes-http
 

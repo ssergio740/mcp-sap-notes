@@ -10,7 +10,7 @@ The `search` tool provides semantic search capabilities for SAP Notes and Knowle
 
 When a client calls `search` with a query parameter:
 
-```typescript
+```python
 {
   "name": "search",
   "arguments": {
@@ -19,7 +19,7 @@ When a client calls `search` with a query parameter:
 }
 ```
 
-**File:** `src/http-mcp-server.ts:484-518` or `src/mcp-server.ts:312-346`
+**File:** `py_src/mcp_sap_notes/server_http.py` or `py_src/mcp_sap_notes/server_core.py`
 
 The handler:
 1. Validates the input parameters against the JSON schema
@@ -27,19 +27,17 @@ The handler:
 3. Calls `sapNotesClient.searchNotes(query, token, 10)`
 4. Formats results into readable text
 5. Returns MCP-compatible response
-
+    **File:** `py_src/mcp_sap_notes/server_http.py` or `py_src/mcp_sap_notes/server_core.py`
 ---
-
 ### 2. **Search Strategy: Coveo API**
 
-**File:** `src/sap-notes-api.ts:52-109`
-
+**File:** `py_src/mcp_sap_notes/sap_notes_api.py`
+    **File:** `py_src/mcp_sap_notes/sap_notes_api.py`
 The search uses SAP's **Coveo Search API** - the same powerful search engine that powers `me.sap.com/search`.
-
 #### **How it works:**
 1. **Extract Coveo Token:** First, get the Coveo bearer token from the SAP session
 2. **Build Search Request:** Create a Coveo search body with:
-   - Query string
+    When running with `LOG_LEVEL=debug`, the following debug logs are shown:
    - Filters (documenttype = "SAP Note")
    - Fields to include (mh_id, mh_description, mh_category, etc.)
    - Sort criteria (relevancy)
@@ -89,10 +87,7 @@ GET https://me.sap.com/search
 ```
 (Used to extract the Coveo bearer token from the SAP session)
 
-#### **Note Detail URLs (for fetch):**
-- **Raw Notes API:** `https://me.sap.com/backend/raw/sapnotes/Detail?q={noteId}&t=E&isVTEnabled=false`
 - **OData API:** `https://launchpad.support.sap.com/services/odata/svt/snogwscorr/KnowledgeBaseEntries?$filter=SapNote eq '{noteId}'&$format=json`
-
 ---
 
 ### 4. **Return Message Format**
@@ -106,20 +101,10 @@ Found {N} SAP Note(s) for query: "{query}"
 Title: {title}
 Summary: {summary}
 Component: {component}
-Release Date: {releaseDate}
-Language: {language}
-URL: https://launchpad.support.sap.com/#/notes/{id}
 
 **SAP Note {id2}**
-...
-```
-
-#### **Example Response:**
-
 ```
 Found 1 SAP Note(s) for query: "2744792"
-
-**SAP Note 2744792**
 Title: Java Applications work with keystore "DEFAULT" and SAP Cloud Connector
 Summary: Applications using SAP JCo or JDBC fail with security exceptions when connecting through SAP Cloud Connector
 Component: BC-MID-CON-JCO
@@ -132,7 +117,7 @@ URL: https://launchpad.support.sap.com/#/notes/2744792
 
 ## Debug Output
 
-When running with `npm run start:http:debug`, the following debug logs are shown:
+When running with `LOG_LEVEL=debug`, the following debug logs are shown:
 
 ### **Search Initiation:**
 ```
@@ -192,7 +177,7 @@ Summary: Applications using SAP JCo or JDBC fail with security exceptions...
 To enable comprehensive debug output:
 
 ```bash
-npm run start:http:debug
+mcp-sap-notes-http
 ```
 
 This runs the server with:
@@ -261,6 +246,6 @@ Before any search can execute, the tool:
 - Single unified search interface
 
 **Debug Mode:**
-- Run: `npm run start:http:debug`
+- Run: `mcp-sap-notes-http`
 - View: Detailed logs of Coveo token extraction, search requests, and results
 

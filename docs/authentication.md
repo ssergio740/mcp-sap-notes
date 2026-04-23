@@ -15,13 +15,14 @@ SAP_PASSWORD=your_sap_password
 AUTH_METHOD=password   # or 'auto' (default)
 ```
 
+If you omit `SAP_USERNAME` and `SAP_PASSWORD`, the server can prompt for them only in local stdio sessions with an interactive terminal. In HTTP/AWS deployments, the credentials are collected during the SAP registration step after Microsoft login and stored encrypted per user.
+
 **MCP Client Config (Cursor / Claude Desktop):**
 ```json
 {
   "mcpServers": {
     "sap-notes": {
-      "command": "node",
-      "args": ["/path/to/dist/mcp-server.js"],
+      "command": "mcp-sap-notes-stdio",
       "env": {
         "SAP_USERNAME": "your.email@company.com",
         "SAP_PASSWORD": "your_sap_password"
@@ -42,29 +43,28 @@ AUTH_METHOD=password   # or 'auto' (default)
 
 **Advantages:**
 - No certificate management required
-- Credentials can be passed via MCP client config (no .env file needed)
-- Works in CI/CD pipelines
-- Easier to set up than certificates
+- Credentials are stored per Microsoft user, not globally
+- Works in CI/CD pipelines and AWS deployments
+- The server can keep access control tied to SAP credential validation
 
 ### 2. Certificate Authentication
 
 Uses a `.pfx` client certificate for automatic authentication via TLS handshake.
 
 **Configuration:**
-```env
-PFX_PATH=./certs/sap.pfx
-PFX_PASSPHRASE=your_certificate_passphrase
-AUTH_METHOD=certificate   # or 'auto' (default)
+```json
+{
+  "mcpServers": {
+    "sap-notes": {
+      "command": "mcp-sap-notes-stdio",
+      "env": {
+        "SAP_USERNAME": "your.email@company.com",
+        "SAP_PASSWORD": "your_sap_password"
+      }
+    }
+  }
+}
 ```
-
-**How it works:**
-1. Browser context created with client certificate loaded
-2. Navigates to `me.sap.com/home`
-3. Certificate presented during TLS handshake with `accounts.sap.com`
-4. SAP IAS authenticates based on certificate
-5. Session cookies extracted after redirect
-
-**Advantages:**
 - No password storage required
 - Automatic auth without form interaction
 - Works well when certificate is valid and accessible
@@ -82,7 +82,20 @@ When `AUTH_METHOD=auto` (the default), the server automatically selects:
 
 1. **Password auth** if `SAP_USERNAME` + `SAP_PASSWORD` are set
 2. **Certificate auth** if `PFX_PATH` + `PFX_PASSPHRASE` are set
-3. **Error** if neither is configured
+3. **Password auth with interactive prompts** only for local stdio runs with a TTY
+
+## AWS / Claude Flow
+
+In the AWS deployment pattern, Claude authenticates to the MCP server through Microsoft OAuth when connecting to the HTTP endpoint. After Microsoft login, the server checks whether SAP credentials already exist for that Microsoft user. If not, it shows the SAP registration form in the browser, validates the credentials against SAP, and stores them encrypted.
+
+The encrypted credential store is configured with:
+
+```env
+SAP_CRED_STORE_PATH=sap_credentials.json
+SAP_CRED_ENCRYPTION_KEY=your-fernet-key
+```
+
+If `SAP_CRED_ENCRYPTION_KEY` is omitted, the server generates a temporary key and logs a warning. Persist the key in AWS Secrets Manager, SSM Parameter Store, or the container environment so stored credentials survive restarts.
 
 ## MFA/2FA Support
 
@@ -135,7 +148,7 @@ After successful authentication, session cookies are cached to `token-cache.json
 - Ensure the certificate hasn't expired
 
 ### Browser launch failures
-- Install Playwright browsers: `npx playwright install chromium`
+- Install Playwright browsers: `python -m playwright install chromium`
 - Docker: ensure system dependencies are installed
 - Check the [Playwright system requirements](https://playwright.dev/docs/intro#system-requirements)
 

@@ -2,24 +2,21 @@
 
 ## What This Project Is
 
-An MCP (Model Context Protocol) server that gives AI assistants (Cursor, Claude, etc.) direct access to SAP Notes and Knowledge Base articles. It authenticates with SAP's systems via browser automation (Playwright) and exposes two tools: **search** and **get** for SAP Notes.
+A Python FastMCP server that gives AI assistants direct access to SAP Notes and Knowledge Base articles. It authenticates with SAP's systems via browser automation (Playwright) and exposes two tools: **search** and **fetch** for SAP Notes.
 
 ## Architecture Overview
 
+```bash
+python -m venv .venv
+. .venv/Scripts/Activate.ps1
+pip install -e .
+
+# Stdio mode (for Cursor)
+mcp-sap-notes-stdio
+
+# HTTP mode (for Docker/LibreChat)
+mcp-sap-notes-http
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  MCP Client (Cursor / Claude Desktop / LibreChat)           │
-│  Communicates via JSON-RPC 2.0                              │
-└───────────┬──────────────────────────────┬──────────────────┘
-            │ stdio transport              │ HTTP transport
-            ▼                              ▼
-┌───────────────────────┐    ┌──────────────────────────────┐
-│  src/mcp-server.ts    │    │  src/http-mcp-server.ts      │
-│  StdioServerTransport │    │  Express + StreamableHTTP    │
-│  (for Cursor / CLI)   │    │  (for Docker / LibreChat)    │
-└───────────┬───────────┘    └──────────────┬───────────────┘
-            │                               │
-            └──────────┬────────────────────┘
                        ▼
          ┌──────────────────────────┐
          │  MCP Tool Handlers       │
@@ -30,11 +27,10 @@ An MCP (Model Context Protocol) server that gives AI assistants (Cursor, Claude,
         ┌─────────────┴──────────────┐
         ▼                            ▼
 ┌──────────────────┐    ┌────────────────────────┐
-│  src/auth.ts     │    │  src/sap-notes-api.ts  │
-│  SapAuthenticator│    │  SapNotesApiClient     │
-│  Playwright +    │    │  Coveo Search API      │
-│  Certificate/    │    │  Raw Notes API         │
-│  Username auth   │    │  Fallback strategies   │
+│  py_src/.../auth.py │  py_src/.../sap_notes_api.py      │
+│  SapAuthenticator   │  SapNotesApiClient                │
+│  Playwright +       │  Coveo Search API                 │
+│  Certificate/Password │ Raw Notes API                  │
 └──────────────────┘    └────────────────────────┘
         │                            │
         ▼                            ▼
@@ -53,29 +49,26 @@ An MCP (Model Context Protocol) server that gives AI assistants (Cursor, Claude,
 
 | File | Purpose | Key Classes/Exports |
 |------|---------|-------------------|
-| `src/mcp-server.ts` | **Main entry point** - stdio MCP server for Cursor/CLI | `SapNoteMcpServer` |
-| `src/http-mcp-server.ts` | HTTP MCP server for Docker/LibreChat deployments | `HttpSapNoteMcpServer` |
-| `src/auth.ts` | Authentication via Playwright browser automation | `SapAuthenticator` |
-| `src/sap-notes-api.ts` | SAP Notes search (Coveo) and retrieval (raw API) | `SapNotesApiClient` |
-| `src/types.ts` | TypeScript interfaces and JSON schemas | `ServerConfig`, `AuthState`, `SapNote`, etc. |
-| `src/logger.ts` | Pino-based logging with MCP mode detection | `logger`, `authLogger`, `apiLogger` |
-| `src/schemas/sap-notes.ts` | Enhanced Zod schemas with LLM-optimized descriptions | `NoteSearchInputSchema`, `NoteGetInputSchema`, etc. |
+| `py_src/mcp_sap_notes/server_stdio.py` | Main stdio entry point | `main()` |
+| `py_src/mcp_sap_notes/server_http.py` | HTTP entry point | `main()` |
+| `py_src/mcp_sap_notes/auth.py` | Authentication via Playwright browser automation | `SapAuthenticator` |
+| `py_src/mcp_sap_notes/sap_notes_api.py` | SAP Notes search and retrieval | `SapNotesApiClient` |
+| `py_src/mcp_sap_notes/config.py` | Configuration loading | `ServerConfig`, `load_config()` |
+| `py_src/mcp_sap_notes/azure_auth.py` | Azure OAuth with domain allowlist | `DomainFilteredAzureProvider` |
+| `py_src/mcp_sap_notes/html_utils.py` | HTML-to-text parsing | `strip_html`, `parse_note_content` |
 
 ### Test Files
 
 | File | Purpose |
 |------|---------|
-| `test/test-auth.js` | Tests authentication flow |
-| `test/test-sap-api.js` | Tests Coveo search and note retrieval |
-| `test/test-mcp-server.js` | Tests MCP protocol interaction |
-| `test/test-docker-debug.js` | Docker environment debugging |
+| Python smoke tests | Run from the container or ad hoc Python snippets |
 
 ### Configuration
 
 | File | Purpose |
 |------|---------|
-| `.env` / `.env.example` | Environment variables (PFX_PATH, PFX_PASSPHRASE, etc.) |
-| `tsconfig.json` | TypeScript compilation (ES2022, ESNext modules, strict) |
+| `.env` / `.env.example` | Environment variables (SAP_USERNAME, PFX_PATH, Azure OAuth, etc.) |
+| `pyproject.toml` | Python packaging and scripts |
 | `token-cache.json` | Cached authentication cookies (auto-generated) |
 
 ## Authentication Flow
@@ -136,18 +129,15 @@ The server supports two authentication methods:
 ## Running the Server
 
 ```bash
-# Build
-npm run build
+python -m venv .venv
+. .venv/Scripts/Activate.ps1
+pip install -e .
 
 # Stdio mode (for Cursor)
-npm run serve
+mcp-sap-notes-stdio
 
 # HTTP mode (for Docker/LibreChat)
-npm run serve:http
-
-# Development with watch
-npm run dev        # stdio
-npm run dev:http   # http
+mcp-sap-notes-http
 ```
 
 ## MCP Client Configuration
@@ -157,8 +147,7 @@ npm run dev:http   # http
 {
   "mcpServers": {
     "sap-notes": {
-      "command": "node",
-      "args": ["/path/to/mcp-sap-notes/dist/mcp-server.js"],
+      "command": "mcp-sap-notes-stdio",
       "env": {
         "SAP_USERNAME": "your-sap-user",
         "SAP_PASSWORD": "your-sap-password"
@@ -169,8 +158,7 @@ npm run dev:http   # http
 ```
 
 ### HTTP Mode
-```json
-{
+      "command": "mcp-sap-notes-stdio",
   "mcpServers": {
     "sap-notes": {
       "url": "http://localhost:3123/mcp",
@@ -185,20 +173,19 @@ npm run dev:http   # http
 ## Common Development Tasks
 
 ### Adding a new tool
-1. Define Zod schemas in `src/schemas/sap-notes.ts`
-2. Add tool description constant
-3. Register tool in both `src/mcp-server.ts` and `src/http-mcp-server.ts` via `registerTool()`
-4. Implement handler using `SapNotesApiClient` or `SapAuthenticator`
+1. Implement the handler in `py_src/mcp_sap_notes/server_core.py`
+2. Add or adjust validation in `py_src/mcp_sap_notes/config.py`
+3. Implement the API call in `py_src/mcp_sap_notes/sap_notes_api.py`
+4. Wire HTTP auth in `py_src/mcp_sap_notes/server_http.py` if needed
 
 ### Modifying authentication
-- Auth logic is in `src/auth.ts` → `SapAuthenticator.authenticate()`
-- Config loaded in server files' `loadConfig()` methods
+- Auth logic is in `py_src/mcp_sap_notes/auth.py`
+- Config loaded in `py_src/mcp_sap_notes/config.py`
 - Token cache: `token-cache.json` at project root
 
 ### Updating tool descriptions
-- Enhanced descriptions in `src/schemas/sap-notes.ts`
-- These descriptions directly influence LLM tool selection accuracy
-- Format uses USE WHEN / DO NOT USE WHEN / WORKFLOW PATTERN sections
+- Tool descriptions live in `py_src/mcp_sap_notes/server_core.py`
+- Keep them concise and task-focused
 
 ## Environment Variables
 
@@ -212,6 +199,9 @@ npm run dev:http   # http
 | `HEADFUL` | No | `false` | Show browser window |
 | `LOG_LEVEL` | No | `info` | debug/info/warn/error |
 | `HTTP_PORT` | No | `3123` | HTTP server port |
-| `ACCESS_TOKEN` | No | - | Bearer token for HTTP mode |
-| `MFA_TIMEOUT` | No | `120000` | MFA wait timeout (ms) |
-| `AUTH_METHOD` | No | `auto` | Force auth method: `certificate`, `password`, `auto` |
+| `MCP_SERVER_URL` | Yes (HTTP) | - | Public MCP resource URL |
+| `AZURE_TENANT_ID` | Yes (HTTP) | - | Microsoft Entra tenant ID |
+| `AZURE_CLIENT_ID` | Yes (HTTP) | - | Microsoft Entra application client ID |
+| `AZURE_CLIENT_SECRET` | Yes (HTTP) | - | Microsoft Entra application client secret |
+| `AZURE_REQUIRED_SCOPES` | No | `access_as_user` | Required scope list |
+| `ALLOWED_EMAIL_DOMAINS` | Yes (HTTP) | - | Allowed email domains |

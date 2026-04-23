@@ -2,7 +2,7 @@
 
 ## System Overview
 
-The SAP Note Search MCP Server is a Model Context Protocol server that enables AI assistants to search and retrieve SAP Notes. It bridges the gap between AI tools and SAP's authenticated knowledge base.
+The SAP Note Search MCP Server is a Python FastMCP server that enables AI assistants to search and retrieve SAP Notes. It bridges the gap between AI tools and SAP's authenticated knowledge base.
 
 ## Component Diagram
 
@@ -13,10 +13,10 @@ The SAP Note Search MCP Server is a Model Context Protocol server that enables A
 └──────────┬──────────────────────┬───────────────────┘
            │ stdio (JSON-RPC)     │ HTTP (Streamable)
            ▼                      ▼
-┌─────────────────┐    ┌────────────────────────┐
-│  mcp-server.ts  │    │  http-mcp-server.ts    │
-│  Stdio Transport│    │  Express + Streamable  │
-└────────┬────────┘    └───────────┬────────────┘
+┌──────────────────────┐    ┌──────────────────────────┐
+│ server_stdio.py      │    │ server_http.py           │
+│ FastMCP stdio        │    │ FastMCP HTTP + OAuth     │
+└──────────┬───────────┘    └────────────┬─────────────┘
          │                         │
          └────────┬────────────────┘
                   ▼
@@ -28,10 +28,10 @@ The SAP Note Search MCP Server is a Model Context Protocol server that enables A
                  │
     ┌────────────┼────────────┐
     ▼                         ▼
-┌──────────┐        ┌─────────────────┐
-│ auth.ts  │        │ sap-notes-api.ts│
-│ Auth     │        │ Search + Fetch  │
-└────┬─────┘        └────────┬────────┘
+┌──────────┐        ┌─────────────────────┐
+│ auth.py  │        │ sap_notes_api.py    │
+│ Auth     │        │ Search + Fetch      │
+└────┬─────┘        └────────┬────────────┘
      │                       │
      ▼                       ▼
 ┌─────────────────────────────────────┐
@@ -44,18 +44,16 @@ The SAP Note Search MCP Server is a Model Context Protocol server that enables A
 
 ## Server Transports
 
-### Stdio Transport (`mcp-server.ts`)
+### Stdio Transport (`server_stdio.py`)
 - Primary mode for IDE integrations (Cursor, Claude Desktop)
-- Communicates via stdin/stdout using JSON-RPC 2.0
-- No HTTP overhead, direct process communication
+- Communicates via stdin/stdout using FastMCP
 
-### HTTP Transport (`http-mcp-server.ts`)
+### HTTP Transport (`server_http.py`)
 - For Docker, LibreChat, and remote deployments
-- Express server with Streamable HTTP transport
-- Optional bearer token authentication for endpoint protection
-- CORS enabled for cross-origin clients
+- FastMCP HTTP transport with Microsoft Entra ID / Azure OAuth
+- Email-domain allowlist enforced during token validation
 
-## Authentication Layer (`auth.ts`)
+## Authentication Layer (`auth.py`)
 
 ### Method Resolution
 ```
@@ -95,7 +93,7 @@ The SAP Note Search MCP Server is a Model Context Protocol server that enables A
 - 5-minute buffer before expiry to prevent edge cases
 - Single-flight guard prevents concurrent auth attempts
 
-## API Layer (`sap-notes-api.ts`)
+## API Layer (`sap_notes_api.py`)
 
 ### Search Strategy (Multi-tier Fallback)
 
@@ -130,24 +128,21 @@ Get Note Request
        └─ Parse JSON/HTML response
 ```
 
-## Schema Layer (`schemas/sap-notes.ts`)
+## Schema Layer
 
-Enhanced Zod schemas serve dual purposes:
-1. **Validation**: Input/output type checking via Zod
-2. **LLM Guidance**: Comprehensive descriptions help AI models select the right tool
+The Python handlers validate the important inputs directly and keep the responses shaped for MCP clients.
 
-Tool descriptions include:
-- USE WHEN / DO NOT USE WHEN decision matrices
-- Query construction formulas
-- Workflow patterns (search → get chaining)
-- Error handling guidance
+## Logging
 
-## Logging (`logger.ts`)
+- Python logging with configurable levels via `LOG_LEVEL`
+- Sensitive fields are kept out of the main response path
 
-- Pino-based structured logging
-- MCP mode detection: when running as subprocess, logs to stderr only
-- Configurable levels via LOG_LEVEL env var
-- Automatic redaction of sensitive fields (passwords, tokens)
+## HTTP Authorization (`azure_auth.py`)
+
+- Serves OAuth protected-resource metadata for the MCP endpoint
+- Validates Azure access tokens via OIDC discovery and JWKS verification
+- Enforces audience, issuer, required scopes, and allowed email domains
+- Returns `WWW-Authenticate` challenges for 401/403 responses
 
 ## Data Flow
 
@@ -158,10 +153,10 @@ User asks about SAP error
 MCP Client sends tool call
     │
     ▼
-Server receives JSON-RPC request
+FastMCP handler receives the request
     │
     ▼
-Tool handler calls ensureAuthenticated()
+Tool handler calls `ensure_authenticated()`
     │
     ├─ Cache hit → return token
     └─ Cache miss → browser auth → cache → return token

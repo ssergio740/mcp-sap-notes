@@ -3,7 +3,7 @@
 
 ## Overview
 
-This MCP server provides direct access to SAP Notes and Knowledge Base articles using SAP Passport certificate authentication and Playwright browser automation. It connects to the SAP raw notes API (`me.sap.com/backend/raw/sapnotes`) to retrieve actual note content.
+This Python FastMCP server provides direct access to SAP Notes and Knowledge Base articles using Playwright browser automation. It connects to the SAP raw notes API (`me.sap.com/backend/raw/sapnotes`) to retrieve actual note content.
 
 ---
 
@@ -19,7 +19,7 @@ This MCP server provides direct access to SAP Notes and Knowledge Base articles 
 | **P2** | **Localization** | Support for multiple languages (DE, FR, etc.) | Currently EN-focused |
 | **P3** | **Packaging** | Docker container with Playwright dependencies | Simplified deployment |
 | **P3** | **Testing** | Comprehensive test suite with mocked authentication | CI/CD integration |
-| **P3** | **CLI** | `npx sap-note 2744792` convenience wrapper | Standalone usage |
+| **P3** | **CLI** | `mcp-sap-notes-stdio` convenience wrapper | Standalone usage |
 | **P4** | **Monitoring** | Metrics and health check endpoints | Production monitoring |
 
 ---
@@ -27,10 +27,10 @@ This MCP server provides direct access to SAP Notes and Knowledge Base articles 
 ## 2. Architecture
 
 ### Authentication Flow
-1. **SAP Passport Certificate** → mutual TLS authentication with SAP IAS
+1. **SAP Passport Certificate** or username/password → authentication with SAP IAS
 2. **Browser Automation** → Playwright handles complex SAP authentication flows
 3. **Cookie Extraction** → authenticated session cookies used for API calls
-4. **Token Caching** → authentication state cached locally (expires after MAX_JWT_AGE_H)
+4. **Token Caching** → authentication state cached locally (expires after `MAX_JWT_AGE_H`)
 
 ### API Integration
 - **SAP Raw Notes API** → `me.sap.com/backend/raw/sapnotes/Detail`
@@ -158,19 +158,12 @@ Retrieve full content and metadata for a specific SAP Note.
 
 ---
 
-## 5. Development & Testing
+### 5. Development & Testing
 
-### Build
+### Run
 ```bash
-npm run build     # TypeScript compilation
-```
-
-### Test Scripts
-```bash
-npm run test:auth   # Test authentication flow
-npm run test:api    # Test SAP Notes API
-npm run test:mcp    # Test complete MCP server
-npm run test        # Run all tests
+mcp-sap-notes-stdio
+mcp-sap-notes-http
 ```
 
 ### Debug Mode

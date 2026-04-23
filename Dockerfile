@@ -1,36 +1,40 @@
-# Use official Playwright image - includes chromium and all system deps
+# Use official Playwright image - includes Chromium and all system deps.
 FROM mcr.microsoft.com/playwright:v1.52.0-noble
 
 WORKDIR /app
 
-# Copy package files first for better layer caching
-COPY package.json package-lock.json ./
+# Install Python tooling for the FastMCP implementation.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 python3-pip python3-venv \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies
-RUN npm ci --no-audit --no-fund
+# Copy Python project metadata and source first for better layer caching.
+COPY pyproject.toml README.md ./
+COPY py_src/ ./py_src/
 
-# Copy source and build
-COPY tsconfig.json ./
-COPY src/ ./src/
+RUN python3 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/venv/bin/pip install --no-cache-dir -e .
 
-RUN npm run build
+# Ensure the Playwright browser binary is available for the Python runtime.
+RUN /opt/venv/bin/python -m playwright install chromium
 
-# Install only chromium (image may have different version than what we need)
-RUN npx playwright install chromium
-
-# Default environment
+# Default environment.
 ENV DOCKER_ENV=true \
     NODE_ENV=production \
-    HTTP_PORT=3123 \
-    AUTO_START=true \
+    HTTP_PORT=8090 \
+    HTTP_HOST=0.0.0.0 \
+    MCP_HTTP_PATH=/mcp \
     LOG_LEVEL=info \
     MAX_JWT_AGE_H=12 \
-    MFA_TIMEOUT=120000
+    MFA_TIMEOUT=120000 \
+    PATH=/opt/venv/bin:$PATH \
+    PYTHONUNBUFFERED=1
 
 EXPOSE 3123
 
-# Health check
+# Health check.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD node -e "fetch('http://localhost:3123/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"
+    CMD python3 -c "import os, sys, urllib.request; port = os.environ.get('HTTP_PORT', '8090'); sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{port}/mcp', timeout=5).status < 500 else 1)"
 
-CMD ["node", "dist/http-mcp-server.js"]
+CMD ["mcp-sap-notes-http"]

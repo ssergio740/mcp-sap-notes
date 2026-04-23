@@ -1,0 +1,17 @@
+services:
+  sap-notes:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mcp-sap-notes-python:latest
+    container_name: mcp-sap-notes
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: ${HTTP_PORT:-8090}
+      MCP_HTTP_PATH: /mcp
+    shm_size: "1gb"
+    ports:
+      - "${HTTP_PORT:-8090}:${HTTP_PORT:-8090}"
